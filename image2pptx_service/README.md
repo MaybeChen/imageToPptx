@@ -8,17 +8,22 @@ A FastAPI service that converts a single image (`png/jpg/jpeg/webp`) into a Powe
 cd image2pptx_service
 python -m venv .venv
 source .venv/bin/activate
-pip install -r requirements.txt
+poetry install
 ```
 
-Optional OCR: install the Tesseract binary or add PaddleOCR. If OCR is unavailable, the service degrades to the dummy OCR adapter and records a warning.
+Optional OCR: install the Tesseract binary for `pytesseract`, or run `poetry install --extras paddleocr` to enable the PaddleOCR adapter. If OCR is unavailable, the service degrades to the dummy OCR adapter and records a warning.
+
+
+## Dependency management
+
+Dependencies are managed with Poetry via `pyproject.toml`. Use `poetry install` for the MVP runtime and test dependencies, or `poetry install --extras paddleocr` when PaddleOCR support is required.
 
 ## Start service
 
 ```bash
-uvicorn app.main:app --host 0.0.0.0 --port 8000
+poetry run uvicorn app.main:app --host 0.0.0.0 --port 8000
 # or
-python run.py
+poetry run python run.py
 ```
 
 ## API
