@@ -3,6 +3,7 @@ from __future__ import annotations
 import os
 from pathlib import Path
 
+from app.config import settings
 from app.schemas import OcrItem
 
 
@@ -32,42 +33,70 @@ class TesseractOcrEngine(OcrEngine):
         return items
 
 
-def _existing_dir_from_env(name: str) -> str | None:
-    value = os.getenv(name)
-    if not value:
-        return None
-    path = Path(value).expanduser()
+DEFAULT_PADDLEOCR_MODEL_DIRS = {
+    'det_model_dir': ('ch_PP-OCRv4_det_infer', 'PADDLEOCR_DET_MODEL_DIR'),
+    'rec_model_dir': ('ch_PP-OCRv4_rec_infer', 'PADDLEOCR_REC_MODEL_DIR'),
+    'cls_model_dir': ('ch_ppocr_mobile_v2.0_cls_infer', 'PADDLEOCR_CLS_MODEL_DIR'),
+}
+
+
+def _existing_dir(path: Path, label: str) -> str:
+    path = path.expanduser()
     if not path.exists():
-        raise FileNotFoundError(f'{name} points to a missing PaddleOCR model directory: {path}')
+        raise FileNotFoundError(f'{label} points to a missing PaddleOCR model directory: {path}')
     return str(path)
 
 
-def paddleocr_kwargs_from_env() -> dict[str, str]:
-    """Read local PaddleOCR model directories from environment variables.
+def _repo_model_base_dir() -> Path:
+    return settings.storage_dir / 'models' / 'paddleocr'
 
-    PaddleOCR downloads model tarballs during initialization when model dirs are
-    not supplied. Corporate Windows environments may block that HTTPS download
-    with a self-signed-certificate error, so these env vars let callers point to
-    pre-downloaded/extracted models and avoid network access.
+
+def paddleocr_kwargs_from_local_models() -> dict[str, str]:
+    """Read PaddleOCR model dirs from the fixed project-local storage path.
+
+    Expected layout:
+      storage/models/paddleocr/ch_PP-OCRv4_det_infer
+      storage/models/paddleocr/ch_PP-OCRv4_rec_infer
+      storage/models/paddleocr/ch_ppocr_mobile_v2.0_cls_infer
     """
-    mapping = {
-        'det_model_dir': 'PADDLEOCR_DET_MODEL_DIR',
-        'rec_model_dir': 'PADDLEOCR_REC_MODEL_DIR',
-        'cls_model_dir': 'PADDLEOCR_CLS_MODEL_DIR',
+    base_dir = _repo_model_base_dir()
+    candidates = {
+        kwarg: base_dir / dirname
+        for kwarg, (dirname, _env_name) in DEFAULT_PADDLEOCR_MODEL_DIRS.items()
     }
+    existing = {kwarg: str(path) for kwarg, path in candidates.items() if path.exists()}
+    if not existing:
+        return {}
+    if len(existing) != len(candidates):
+        missing = ', '.join(str(path) for path in candidates.values() if not path.exists())
+        raise FileNotFoundError(f'Incomplete project-local PaddleOCR model set. Missing: {missing}')
+    return existing
+
+
+def paddleocr_kwargs_from_env() -> dict[str, str]:
+    """Read optional PaddleOCR model directory overrides from environment variables."""
     kwargs = {}
-    for kwarg, env_name in mapping.items():
-        value = _existing_dir_from_env(env_name)
+    for kwarg, (_dirname, env_name) in DEFAULT_PADDLEOCR_MODEL_DIRS.items():
+        value = os.getenv(env_name)
         if value:
-            kwargs[kwarg] = value
+            kwargs[kwarg] = _existing_dir(Path(value), env_name)
     return kwargs
+
+
+def paddleocr_model_kwargs() -> dict[str, str]:
+    """Return PaddleOCR model dirs: env overrides first, then project-local dirs.
+
+    Supplying model dirs avoids PaddleOCR's first-run HTTPS downloads, which are
+    commonly blocked by corporate TLS interception.
+    """
+    return paddleocr_kwargs_from_env() or paddleocr_kwargs_from_local_models()
 
 
 class PaddleOcrEngine(OcrEngine):
     name = 'paddleocr'
     def __init__(self):
         from paddleocr import PaddleOCR
-        self.ocr = PaddleOCR(use_angle_cls=True, lang='ch', **paddleocr_kwargs_from_env())
+        self.ocr = PaddleOCR(use_angle_cls=True, lang='ch', **paddleocr_model_kwargs())
     def detect(self, image_path: str) -> list[OcrItem]:
         result = self.ocr.ocr(image_path, cls=True) or []
         items=[]

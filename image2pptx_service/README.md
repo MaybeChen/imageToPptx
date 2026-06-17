@@ -21,16 +21,21 @@ Dependencies are managed with Poetry via `pyproject.toml`. Use `poetry install` 
 
 ## PaddleOCR offline/corporate-network setup
 
-PaddleOCR downloads detection/recognition/classification model archives on first initialization. In corporate Windows environments this can fail with `SSLCertVerificationError: self signed certificate in certificate chain` while downloading from `paddleocr.bj.bcebos.com`. To avoid runtime downloads, pre-download and extract the PaddleOCR model directories, then point the service to them before running conversion:
+PaddleOCR downloads detection/recognition/classification model archives on first initialization. In corporate Windows environments this can fail with `SSLCertVerificationError: self signed certificate in certificate chain` while downloading from `paddleocr.bj.bcebos.com`. To avoid runtime downloads, pre-download and extract the PaddleOCR model directories into the fixed project-local directory below:
 
-```powershell
-$env:PADDLEOCR_DET_MODEL_DIR="C:\models\paddleocr\ch_PP-OCRv4_det_infer"
-$env:PADDLEOCR_REC_MODEL_DIR="C:\models\paddleocr\ch_PP-OCRv4_rec_infer"
-$env:PADDLEOCR_CLS_MODEL_DIR="C:\models\paddleocr\ch_ppocr_mobile_v2.0_cls_infer"
-poetry run python -c "import os; from paddleocr import PaddleOCR; PaddleOCR(use_angle_cls=True, lang='ch', det_model_dir=os.environ['PADDLEOCR_DET_MODEL_DIR'], rec_model_dir=os.environ['PADDLEOCR_REC_MODEL_DIR'], cls_model_dir=os.environ['PADDLEOCR_CLS_MODEL_DIR']); print('ok')"
+```text
+image2pptx_service/storage/models/paddleocr/ch_PP-OCRv4_det_infer
+image2pptx_service/storage/models/paddleocr/ch_PP-OCRv4_rec_infer
+image2pptx_service/storage/models/paddleocr/ch_ppocr_mobile_v2.0_cls_infer
 ```
 
-The service reads the same `PADDLEOCR_DET_MODEL_DIR`, `PADDLEOCR_REC_MODEL_DIR`, and `PADDLEOCR_CLS_MODEL_DIR` environment variables when constructing the PaddleOCR adapter, so conversion can run without downloading model files at startup. The `No ccache found` message is only a Paddle warning and is not the reason OCR initialization fails.
+Then verify from `image2pptx_service`:
+
+```powershell
+poetry run python -c "from app.pipeline.ocr import paddleocr_model_kwargs; from paddleocr import PaddleOCR; PaddleOCR(use_angle_cls=True, lang='ch', **paddleocr_model_kwargs()); print('ok')"
+```
+
+The service first uses optional `PADDLEOCR_DET_MODEL_DIR`, `PADDLEOCR_REC_MODEL_DIR`, and `PADDLEOCR_CLS_MODEL_DIR` overrides when present, otherwise it automatically uses the fixed project-local `storage/models/paddleocr` directories. Large model files are ignored by git; keep only `storage/models/.gitkeep` in source control. The `No ccache found` message is only a Paddle warning and is not the reason OCR initialization fails.
 
 ## Start service
 

@@ -4,3 +4,5 @@ __pycache__/
 .venv/
 storage/jobs/*
 !storage/jobs/.gitkeep
+storage/models/*
+!storage/models/.gitkeep
