@@ -13,6 +13,23 @@ poetry install
 
 Optional OCR: install the Tesseract binary for `pytesseract` (or set `TESSERACT_CMD` to its executable path), or run `poetry install --extras paddleocr` and install the matching `paddlepaddle`/`paddlepaddle-gpu` wheel to enable the PaddleOCR adapter. `setuptools` is included because Paddle/PaddleOCR imports still require it in some environments. If OCR is unavailable, the service degrades to the dummy OCR adapter and records a warning.
 
+### Tesseract OCR setup
+
+Install Tesseract OCR on the same machine that runs the service, then restart the service process before submitting image conversion jobs.
+
+Windows common setup:
+
+1. Install Tesseract, for example to `C:\Program Files\Tesseract-OCR\tesseract.exe`.
+2. Set `TESSERACT_CMD=C:\Program Files\Tesseract-OCR\tesseract.exe` for the service process.
+3. Restart the service process.
+4. Submit the image conversion task again.
+
+Linux/macOS common setup:
+
+1. Install the system `tesseract` package.
+2. Confirm the service process can find it with `which tesseract`.
+3. If it cannot be found, set `TESSERACT_CMD` to the actual executable path.
+
 
 ## Dependency management
 
