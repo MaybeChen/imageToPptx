@@ -18,6 +18,20 @@ Optional OCR: install the Tesseract binary for `pytesseract`, or run `poetry ins
 
 Dependencies are managed with Poetry via `pyproject.toml`. Use `poetry install` for the MVP runtime and test dependencies, or `poetry install --extras paddleocr` when PaddleOCR support is required. If `poetry run python -c "import paddle; paddle.utils.run_check()"` reports `ModuleNotFoundError: No module named 'setuptools'`, rerun `poetry install` after pulling this change or run `poetry add setuptools`.
 
+
+## PaddleOCR offline/corporate-network setup
+
+PaddleOCR downloads detection/recognition/classification model archives on first initialization. In corporate Windows environments this can fail with `SSLCertVerificationError: self signed certificate in certificate chain` while downloading from `paddleocr.bj.bcebos.com`. To avoid runtime downloads, pre-download and extract the PaddleOCR model directories, then point the service to them before running conversion:
+
+```powershell
+$env:PADDLEOCR_DET_MODEL_DIR="C:\models\paddleocr\ch_PP-OCRv4_det_infer"
+$env:PADDLEOCR_REC_MODEL_DIR="C:\models\paddleocr\ch_PP-OCRv4_rec_infer"
+$env:PADDLEOCR_CLS_MODEL_DIR="C:\models\paddleocr\ch_ppocr_mobile_v2.0_cls_infer"
+poetry run python -c "import os; from paddleocr import PaddleOCR; PaddleOCR(use_angle_cls=True, lang='ch', det_model_dir=os.environ['PADDLEOCR_DET_MODEL_DIR'], rec_model_dir=os.environ['PADDLEOCR_REC_MODEL_DIR'], cls_model_dir=os.environ['PADDLEOCR_CLS_MODEL_DIR']); print('ok')"
+```
+
+The service reads the same `PADDLEOCR_DET_MODEL_DIR`, `PADDLEOCR_REC_MODEL_DIR`, and `PADDLEOCR_CLS_MODEL_DIR` environment variables when constructing the PaddleOCR adapter, so conversion can run without downloading model files at startup. The `No ccache found` message is only a Paddle warning and is not the reason OCR initialization fails.
+
 ## Start service
 
 ```bash
