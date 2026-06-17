@@ -11,12 +11,12 @@ source .venv/bin/activate
 poetry install
 ```
 
-Optional OCR: install the Tesseract binary for `pytesseract`, or run `poetry install --extras paddleocr` to enable the PaddleOCR adapter. If OCR is unavailable, the service degrades to the dummy OCR adapter and records a warning.
+Optional OCR: install the Tesseract binary for `pytesseract`, or run `poetry install --extras paddleocr` and install the matching `paddlepaddle`/`paddlepaddle-gpu` wheel to enable the PaddleOCR adapter. `setuptools` is included because Paddle/PaddleOCR imports still require it in some environments. If OCR is unavailable, the service degrades to the dummy OCR adapter and records a warning.
 
 
 ## Dependency management
 
-Dependencies are managed with Poetry via `pyproject.toml`. Use `poetry install` for the MVP runtime and test dependencies, or `poetry install --extras paddleocr` when PaddleOCR support is required.
+Dependencies are managed with Poetry via `pyproject.toml`. Use `poetry install` for the MVP runtime and test dependencies, or `poetry install --extras paddleocr` when PaddleOCR support is required. If `poetry run python -c "import paddle; paddle.utils.run_check()"` reports `ModuleNotFoundError: No module named 'setuptools'`, rerun `poetry install` after pulling this change or run `poetry add setuptools`.
 
 ## Start service
 
