@@ -6,9 +6,62 @@ from app.utils.image import save_crop
 from app.utils.files import write_json
 
 
+def _area(bbox):
+    return max(0, bbox[2]) * max(0, bbox[3])
+
+
+def _intersection_area(a, b):
+    ax1, ay1, aw, ah = a
+    bx1, by1, bw, bh = b
+    ax2, ay2 = ax1 + aw, ay1 + ah
+    bx2, by2 = bx1 + bw, by1 + bh
+    iw = max(0, min(ax2, bx2) - max(ax1, bx1))
+    ih = max(0, min(ay2, by2) - max(ay1, by1))
+    return iw * ih
+
+
+def _is_icon_like_segment(seg, slide_area):
+    if seg.type == 'icon':
+        return True
+    if seg.type != 'image':
+        return False
+    _, _, w, h = seg.bbox_px
+    if w <= 0 or h <= 0:
+        return False
+    area_ratio = _area(seg.bbox_px) / max(1, slide_area)
+    aspect = w / h
+    return area_ratio <= 0.04 and 0.4 <= aspect <= 2.5
+
+
+def _ocr_item_overlaps_icon(item, icon_segments):
+    item_area = _area(item.bbox_px)
+    if item_area <= 0:
+        return False
+    return any(_intersection_area(item.bbox_px, seg.bbox_px) / item_area >= 0.6 for seg in icon_segments)
+
+
+def filter_ocr_items_for_manifest(ocr_items, segments, width_px, height_px):
+    """Drop OCR boxes that are more likely to be icon glyphs than slide text."""
+    slide_area = width_px * height_px
+    icon_segments = [seg for seg in segments if _is_icon_like_segment(seg, slide_area)]
+    if not icon_segments:
+        return list(ocr_items), 0
+    kept = []
+    removed = 0
+    for item in ocr_items:
+        if _ocr_item_overlaps_icon(item, icon_segments):
+            removed += 1
+        else:
+            kept.append(item)
+    return kept, removed
+
+
 def build_manifest(job, ocr_items, segments, mode='balanced', ppt_width=13.333, ppt_height=7.5, warnings=None, ocr_engine='unknown'):
     elements = []
     warnings = list(warnings or [])
+    ocr_items, filtered_icon_ocr_count = filter_ocr_items_for_manifest(ocr_items, segments, job['width_px'], job['height_px'])
+    if filtered_icon_ocr_count:
+        warnings.append(f'Filtered {filtered_icon_ocr_count} OCR text candidate(s) that overlapped icon-like image regions.')
 
     background_rel = 'assets/background.png'
     copyfile(job['source_path'], job['job_root'] / background_rel)
