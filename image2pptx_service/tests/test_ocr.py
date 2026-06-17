@@ -8,6 +8,7 @@ from app.pipeline.ocr import (
     paddleocr_kwargs_from_local_models,
     configure_loaded_paddle_runtime,
     configure_paddleocr_runtime,
+    TESSERACT_INSTALL_HELP,
     get_ocr_engine,
     paddleocr_model_kwargs,
     paddleocr_runtime_kwargs,
@@ -125,6 +126,10 @@ def test_tesseract_engine_reports_missing_binary_during_selection(monkeypatch):
 
     assert engine.name == "dummy"
     assert warnings[0].startswith("Tesseract unavailable: FileNotFoundError")
+    assert "Windows" in warnings[0]
+    assert "Linux/macOS" in warnings[0]
+    assert "TESSERACT_CMD" in warnings[0]
+    assert TESSERACT_INSTALL_HELP in warnings[0]
     assert warnings[-1] == "Using Dummy OCR engine; no native text boxes may be created."
 
 
