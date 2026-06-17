@@ -29,7 +29,7 @@ def build_pptx(manifest, job_root: Path, output_path: Path) -> Path:
         elif e.type == 'shape':
             shape_type=MSO_SHAPE.ROUNDED_RECTANGLE if e.shape=='rounded_rect' else MSO_SHAPE.RECTANGLE
             shp=slide.shapes.add_shape(shape_type, Inches(x), Inches(y), Inches(w), Inches(h)); shp.fill.solid(); shp.fill.fore_color.rgb=_rgb(e.style.get('fill','#FFFFFF')); shp.line.color.rgb=_rgb(e.style.get('stroke','#D1D5DB'))
-        elif e.type == 'image' and e.asset_path:
+        elif e.type in ('image', 'icon', 'chart') and e.asset_path:
             _add_picture(slide, job_root, e.asset_path, x, y, w, h)
         elif e.type in ('line','arrow'):
             slide.shapes.add_connector(1, Inches(x), Inches(y), Inches(x+w), Inches(y+h))

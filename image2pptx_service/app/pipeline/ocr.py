@@ -25,6 +25,15 @@ class DummyOcrEngine(OcrEngine):
     def detect(self, image_path: str) -> list[OcrItem]: return []
 
 
+TESSERACT_INSTALL_HELP = (
+    'Install Tesseract OCR on the service host and restart the service. '
+    'Windows: install it (for example C:\\Program Files\\Tesseract-OCR\\tesseract.exe) '
+    'and set TESSERACT_CMD to that executable path. '
+    'Linux/macOS: install the system tesseract package and ensure `which tesseract` works for the service process, '
+    'or set TESSERACT_CMD to the actual executable path.'
+)
+
+
 class TesseractOcrEngine(OcrEngine):
     name = 'tesseract'
     def __init__(self):
@@ -33,7 +42,7 @@ class TesseractOcrEngine(OcrEngine):
         if tesseract_cmd:
             pytesseract.pytesseract.tesseract_cmd = tesseract_cmd
         elif not shutil.which('tesseract'):
-            raise FileNotFoundError('tesseract is not installed or is not in PATH; install it or set TESSERACT_CMD')
+            raise FileNotFoundError(f'tesseract is not installed or is not in PATH. {TESSERACT_INSTALL_HELP}')
 
     def detect(self, image_path: str) -> list[OcrItem]:
         import pytesseract
