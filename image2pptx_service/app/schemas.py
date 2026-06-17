@@ -47,7 +47,7 @@ class SlideInfo(BaseModel):
 
 class StrategyInfo(BaseModel):
     mode: Literal['fast','balanced','editable'] = 'balanced'
-    background: str = 'solid_or_image'
+    background: str = 'image_fallback'
     editability_level: Literal['low','medium','high'] = 'medium'
 
 class ManifestQuality(BaseModel):
@@ -55,6 +55,8 @@ class ManifestQuality(BaseModel):
     native_text_count: int = 0
     shape_count: int = 0
     image_asset_count: int = 0
+    background_asset_count: int = 0
+    ocr_engine: str = 'unknown'
     warnings: list[str] = Field(default_factory=list)
 
 class SlideManifest(BaseModel):

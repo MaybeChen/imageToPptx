@@ -82,12 +82,13 @@ output/preview.png
 debug/
 ```
 
-`slide_manifest.json` is the only intermediate representation consumed by the PPTX builder. Coordinates are source-image pixels and every element includes `bbox_px` and `editable`.
+`slide_manifest.json` is the only intermediate representation consumed by the PPTX builder. Coordinates are source-image pixels and every element includes `bbox_px` and `editable`. Complex slides include a `background` element that points to `assets/background.png` as a visual fallback.
 
 ## MVP boundaries
 
 - Readable OCR text becomes native PowerPoint text boxes when OCR is available.
 - Simple detected rectangles become native shapes.
+- The original slide image is inserted as a full-slide visual fallback background, then detected editable elements are layered on top. This improves fidelity for complex business slides but the background itself is not internally editable.
 - Complex visuals, logos, charts, photos, and icons are independent image assets, not internally editable.
 - Preview is currently a reference copy of the normalized source image. Install LibreOffice and extend `pipeline/render.py` for true PPTX rendering.
 - The service does not use image-generation, inpainting, or sub-agent/page-worker flows.
