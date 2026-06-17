@@ -1,9 +1,14 @@
+import os
+
 import pytest
 
 from app.pipeline.ocr import (
     paddleocr_kwargs_from_env,
     paddleocr_kwargs_from_local_models,
+    configure_paddleocr_runtime,
+    get_ocr_engine,
     paddleocr_model_kwargs,
+    paddleocr_runtime_kwargs,
 )
 
 
@@ -84,3 +89,38 @@ def test_paddleocr_kwargs_from_project_local_models_rejects_partial_set(monkeypa
 
     with pytest.raises(FileNotFoundError):
         paddleocr_kwargs_from_local_models()
+
+
+def test_paddleocr_runtime_defaults_disable_mkldnn(monkeypatch):
+    monkeypatch.delenv("PADDLEOCR_ENABLE_MKLDNN", raising=False)
+    monkeypatch.setenv("FLAGS_use_mkldnn", "1")
+    monkeypatch.setenv("FLAGS_use_onednn", "1")
+
+    configure_paddleocr_runtime()
+
+    assert paddleocr_runtime_kwargs() == {"enable_mkldnn": False}
+    assert os.environ["FLAGS_use_mkldnn"] == "0"
+    assert os.environ["FLAGS_use_onednn"] == "0"
+
+
+def test_paddleocr_runtime_allows_explicit_mkldnn(monkeypatch):
+    monkeypatch.setenv("PADDLEOCR_ENABLE_MKLDNN", "1")
+    monkeypatch.delenv("FLAGS_use_mkldnn", raising=False)
+    monkeypatch.delenv("FLAGS_use_onednn", raising=False)
+
+    configure_paddleocr_runtime()
+
+    assert paddleocr_runtime_kwargs() == {"enable_mkldnn": True}
+    assert "FLAGS_use_mkldnn" not in os.environ
+    assert "FLAGS_use_onednn" not in os.environ
+
+
+def test_tesseract_engine_reports_missing_binary_during_selection(monkeypatch):
+    monkeypatch.delenv("TESSERACT_CMD", raising=False)
+    monkeypatch.setattr("app.pipeline.ocr.shutil.which", lambda command: None)
+
+    engine, warnings = get_ocr_engine("tesseract")
+
+    assert engine.name == "dummy"
+    assert warnings[0].startswith("Tesseract unavailable: FileNotFoundError")
+    assert warnings[-1] == "Using Dummy OCR engine; no native text boxes may be created."
