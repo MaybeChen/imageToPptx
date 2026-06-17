@@ -43,6 +43,8 @@ The service separates OCR text restoration from visual element segmentation inst
 
 This is still a local OpenCV heuristic adapter, not a SAM/SAM3 implementation. For production-quality extraction comparable to Edit-Banana, replace or extend `app.pipeline.segment.detect_segments` with a model-backed semantic segmenter that emits the same `SegmentItem` categories.
 
+OCR post-processing is intentionally conservative about compact one- or two-character OCR candidates because icons are often recognized as glyphs. Set `OCR_FILTER_SHORT_GLYPHS=0` if your slides contain many real single-character labels, adjust `OCR_SHORT_TEXT_MAX_AREA_RATIO` for the short-text area threshold, and tune `OCR_FONT_SCALE` if a deployment's OCR boxes consistently produce text that is too large or too small. For complete visual restoration of fonts, weights, and icon/text boundaries, add a model-backed layout/segmentation adapter rather than relying on OCR alone.
+
 ## PaddleOCR offline/corporate-network setup
 
 PaddleOCR downloads detection/recognition/classification model archives on first initialization. In corporate Windows environments this can fail with `SSLCertVerificationError: self signed certificate in certificate chain` while downloading from `paddleocr.bj.bcebos.com`. To avoid runtime downloads, pre-download and extract the PaddleOCR model directories into the fixed project-local directory below:

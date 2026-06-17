@@ -68,12 +68,13 @@ def test_build_manifest_preserves_icon_asset_type(tmp_path):
     assert manifest.quality.image_asset_count == 1
 
 
-def test_build_manifest_uses_ocr_bbox_for_smaller_font_and_text_color(tmp_path):
+def test_build_manifest_uses_ocr_bbox_for_smaller_font_and_text_color(tmp_path, monkeypatch):
+    monkeypatch.setenv("OCR_FILTER_SHORT_GLYPHS", "0")
     source = tmp_path / "text_source.png"
     image = Image.new("RGB", (1280, 720), "white")
     from PIL import ImageDraw
     draw = ImageDraw.Draw(image)
-    draw.text((20, 20), "Hi", fill=(10, 20, 220))
+    draw.text((20, 20), "Hello", fill=(10, 20, 220))
     image.save(source)
     job_root = tmp_path / "text_job"
     (job_root / "assets").mkdir(parents=True)
@@ -90,11 +91,34 @@ def test_build_manifest_uses_ocr_bbox_for_smaller_font_and_text_color(tmp_path):
 
     manifest, _ = build_manifest(
         job,
-        ocr_items=[OcrItem(text="Hi", bbox_px=[18, 18, 40, 20], confidence=0.9)],
+        ocr_items=[OcrItem(text="Hello", bbox_px=[18, 18, 80, 20], confidence=0.9)],
         segments=[],
     )
 
     text = next(element for element in manifest.elements if element.type == "text")
-    assert text.style["font_size"] == 10.8
+    assert text.style["font_size"] == 9.3
     assert text.style["margin_left"] == 0
     assert text.style["color"].startswith("#")
+
+
+def test_filter_ocr_items_for_manifest_drops_compact_short_glyph_without_segment(monkeypatch):
+    monkeypatch.delenv("OCR_FILTER_SHORT_GLYPHS", raising=False)
+    ocr_items = [
+        OcrItem(text="A", bbox_px=[102, 102, 18, 18], confidence=0.96),
+        OcrItem(text="Revenue", bbox_px=[200, 100, 120, 32], confidence=0.91),
+    ]
+
+    kept, removed = filter_ocr_items_for_manifest(ocr_items, [], width_px=1000, height_px=600)
+
+    assert removed == 1
+    assert [item.text for item in kept] == ["Revenue"]
+
+
+def test_filter_ocr_items_for_manifest_can_keep_short_labels_when_disabled(monkeypatch):
+    monkeypatch.setenv("OCR_FILTER_SHORT_GLYPHS", "0")
+    ocr_items = [OcrItem(text="A", bbox_px=[102, 102, 18, 18], confidence=0.96)]
+
+    kept, removed = filter_ocr_items_for_manifest(ocr_items, [], width_px=1000, height_px=600)
+
+    assert removed == 0
+    assert kept == ocr_items

@@ -1,10 +1,38 @@
 from pathlib import Path
 from shutil import copyfile
+import os
 from app.schemas import *
 from app.utils.colors import dominant_hex, text_color_hex
 from app.utils.image import save_crop
 from app.utils.files import write_json
 
+
+
+
+def _env_float(name: str, default: float) -> float:
+    try:
+        return float(os.getenv(name, default))
+    except (TypeError, ValueError):
+        return default
+
+
+def _env_flag(name: str, default: bool = True) -> bool:
+    value = os.getenv(name)
+    if value is None:
+        return default
+    return value.lower() in ('1', 'true', 'yes', 'on')
+
+
+def _compact_short_text_candidate(item, slide_area) -> bool:
+    text = (item.text or '').strip()
+    if not text or len(text) > 2:
+        return False
+    _, _, w, h = item.bbox_px
+    if w <= 0 or h <= 0:
+        return True
+    aspect = w / h
+    area_ratio = _area(item.bbox_px) / max(1, slide_area)
+    return area_ratio <= _env_float('OCR_SHORT_TEXT_MAX_AREA_RATIO', 0.006) and 0.45 <= aspect <= 2.2
 
 def _area(bbox):
     return max(0, bbox[2]) * max(0, bbox[3])
@@ -44,12 +72,13 @@ def filter_ocr_items_for_manifest(ocr_items, segments, width_px, height_px):
     """Drop OCR boxes that are more likely to be icon glyphs than slide text."""
     slide_area = width_px * height_px
     icon_segments = [seg for seg in segments if _is_icon_like_segment(seg, slide_area)]
-    if not icon_segments:
-        return list(ocr_items), 0
     kept = []
     removed = 0
+    filter_short_glyphs = _env_flag('OCR_FILTER_SHORT_GLYPHS', True)
     for item in ocr_items:
-        if _ocr_item_overlaps_icon(item, icon_segments):
+        overlaps_icon = bool(icon_segments) and _ocr_item_overlaps_icon(item, icon_segments)
+        compact_glyph = filter_short_glyphs and _compact_short_text_candidate(item, slide_area)
+        if overlaps_icon or compact_glyph:
             removed += 1
         else:
             kept.append(item)
@@ -61,7 +90,7 @@ def build_manifest(job, ocr_items, segments, mode='balanced', ppt_width=13.333, 
     warnings = list(warnings or [])
     ocr_items, filtered_icon_ocr_count = filter_ocr_items_for_manifest(ocr_items, segments, job['width_px'], job['height_px'])
     if filtered_icon_ocr_count:
-        warnings.append(f'Filtered {filtered_icon_ocr_count} OCR text candidate(s) that overlapped icon-like image regions.')
+        warnings.append(f'Filtered {filtered_icon_ocr_count} OCR text candidate(s) that looked like icon glyphs or overlapped icon-like image regions.')
 
     background_rel = 'assets/background.png'
     copyfile(job['source_path'], job['job_root'] / background_rel)
@@ -88,7 +117,7 @@ def build_manifest(job, ocr_items, segments, mode='balanced', ppt_width=13.333, 
             elements.append(ManifestElement(id=f'{asset_type}_{idx:03d}', type=asset_type, asset_path=asset_rel, bbox_px=seg.bbox_px, editable=False, confidence=seg.confidence, editable_note='Inserted as independent image asset to preserve complex visual details.'))
     scale = ppt_height / job['height_px'] * 72
     for idx, item in enumerate(ocr_items, 1):
-        fs=max(6, min(54, item.bbox_px[3]*scale*0.72))
+        fs=max(6, min(54, item.bbox_px[3]*scale*_env_float('OCR_FONT_SCALE', 0.62)))
         elements.append(ManifestElement(id=f'text_{idx:03d}', type='text', text=item.text, bbox_px=item.bbox_px, editable=True, confidence=item.confidence, style={'font_size': round(fs,1), 'font_family':'Microsoft YaHei', 'color': text_color_hex(job['source_path'], item.bbox_px), 'bold': False, 'margin_left': 0, 'margin_right': 0, 'margin_top': 0, 'margin_bottom': 0}))
     elements.sort(key=lambda e: {'background':0,'shape':1,'image':2,'icon':2,'chart':2,'line':3,'arrow':3,'text':4}.get(e.type,9))
     quality=ManifestQuality(ocr_text_count=len(ocr_items), native_text_count=sum(e.type=='text' for e in elements), shape_count=sum(e.type=='shape' for e in elements), image_asset_count=sum(e.type in ('image','icon','chart') for e in elements), background_asset_count=sum(e.type=='background' for e in elements), ocr_engine=ocr_engine, warnings=warnings)
