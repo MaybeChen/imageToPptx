@@ -57,6 +57,25 @@ def test_paddleocr_kwargs_from_project_local_models(monkeypatch, tmp_path):
     }
 
 
+def test_paddleocr_kwargs_from_project_local_models_rejects_missing_set(monkeypatch, tmp_path):
+    from app.config import settings
+
+    monkeypatch.delenv("PADDLEOCR_ALLOW_DOWNLOAD", raising=False)
+    monkeypatch.setattr(settings, "storage_dir", tmp_path / "storage")
+
+    with pytest.raises(FileNotFoundError):
+        paddleocr_model_kwargs()
+
+
+def test_paddleocr_kwargs_allows_download_when_explicitly_enabled(monkeypatch, tmp_path):
+    from app.config import settings
+
+    monkeypatch.setenv("PADDLEOCR_ALLOW_DOWNLOAD", "1")
+    monkeypatch.setattr(settings, "storage_dir", tmp_path / "storage")
+
+    assert paddleocr_model_kwargs() == {}
+
+
 def test_paddleocr_kwargs_from_project_local_models_rejects_partial_set(monkeypatch, tmp_path):
     from app.config import settings
 

@@ -29,13 +29,13 @@ image2pptx_service/storage/models/paddleocr/ch_PP-OCRv4_rec_infer
 image2pptx_service/storage/models/paddleocr/ch_ppocr_mobile_v2.0_cls_infer
 ```
 
-Then verify from `image2pptx_service`:
+Then verify from `image2pptx_service` using the project helper. Do not call `PaddleOCR(use_angle_cls=True, lang='ch')` directly unless you also pass model directories, because raw PaddleOCR will still try to download missing models:
 
 ```powershell
 poetry run python -c "from app.pipeline.ocr import paddleocr_model_kwargs; from paddleocr import PaddleOCR; PaddleOCR(use_angle_cls=True, lang='ch', **paddleocr_model_kwargs()); print('ok')"
 ```
 
-The service first uses optional `PADDLEOCR_DET_MODEL_DIR`, `PADDLEOCR_REC_MODEL_DIR`, and `PADDLEOCR_CLS_MODEL_DIR` overrides when present, otherwise it automatically uses the fixed project-local `storage/models/paddleocr` directories. Large model files are ignored by git; keep only `storage/models/.gitkeep` in source control. The `No ccache found` message is only a Paddle warning and is not the reason OCR initialization fails.
+The service first uses optional `PADDLEOCR_DET_MODEL_DIR`, `PADDLEOCR_REC_MODEL_DIR`, and `PADDLEOCR_CLS_MODEL_DIR` overrides when present, otherwise it automatically uses the fixed project-local `storage/models/paddleocr` directories. By default the adapter fails fast if the local model set is missing or incomplete, so it will not silently trigger PaddleOCR downloads. Set `PADDLEOCR_ALLOW_DOWNLOAD=1` only if you intentionally want PaddleOCR to download models at startup. Large model files are ignored by git; keep only `storage/models/.gitkeep` in source control. The `No ccache found` message is only a Paddle warning and is not the reason OCR initialization fails.
 
 ## Start service
 

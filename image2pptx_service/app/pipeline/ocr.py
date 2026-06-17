@@ -51,7 +51,7 @@ def _repo_model_base_dir() -> Path:
     return settings.storage_dir / 'models' / 'paddleocr'
 
 
-def paddleocr_kwargs_from_local_models() -> dict[str, str]:
+def paddleocr_kwargs_from_local_models(require_complete: bool = True) -> dict[str, str]:
     """Read PaddleOCR model dirs from the fixed project-local storage path.
 
     Expected layout:
@@ -66,6 +66,9 @@ def paddleocr_kwargs_from_local_models() -> dict[str, str]:
     }
     existing = {kwarg: str(path) for kwarg, path in candidates.items() if path.exists()}
     if not existing:
+        if require_complete:
+            expected = ', '.join(str(path) for path in candidates.values())
+            raise FileNotFoundError(f'Project-local PaddleOCR models are missing. Expected: {expected}. Set PADDLEOCR_ALLOW_DOWNLOAD=1 to let PaddleOCR download models automatically.')
         return {}
     if len(existing) != len(candidates):
         missing = ', '.join(str(path) for path in candidates.values() if not path.exists())
@@ -86,17 +89,28 @@ def paddleocr_kwargs_from_env() -> dict[str, str]:
 def paddleocr_model_kwargs() -> dict[str, str]:
     """Return PaddleOCR model dirs: env overrides first, then project-local dirs.
 
-    Supplying model dirs avoids PaddleOCR's first-run HTTPS downloads, which are
-    commonly blocked by corporate TLS interception.
+    By default this refuses to return empty kwargs, because empty kwargs make
+    PaddleOCR download models during initialization. Set PADDLEOCR_ALLOW_DOWNLOAD=1
+    only in environments where first-run downloads are acceptable.
     """
-    return paddleocr_kwargs_from_env() or paddleocr_kwargs_from_local_models()
+    env_kwargs = paddleocr_kwargs_from_env()
+    if env_kwargs:
+        return env_kwargs
+    if os.getenv('PADDLEOCR_ALLOW_DOWNLOAD') == '1':
+        return paddleocr_kwargs_from_local_models(require_complete=False)
+    return paddleocr_kwargs_from_local_models(require_complete=True)
+
+
+def create_paddleocr():
+    """Create PaddleOCR with project-local/offline model settings applied."""
+    from paddleocr import PaddleOCR
+    return PaddleOCR(use_angle_cls=True, lang='ch', **paddleocr_model_kwargs())
 
 
 class PaddleOcrEngine(OcrEngine):
     name = 'paddleocr'
     def __init__(self):
-        from paddleocr import PaddleOCR
-        self.ocr = PaddleOCR(use_angle_cls=True, lang='ch', **paddleocr_model_kwargs())
+        self.ocr = create_paddleocr()
     def detect(self, image_path: str) -> list[OcrItem]:
         result = self.ocr.ocr(image_path, cls=True) or []
         items=[]
