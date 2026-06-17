@@ -1,0 +1,86 @@
+import pytest
+
+from app.pipeline.ocr import (
+    paddleocr_kwargs_from_env,
+    paddleocr_kwargs_from_local_models,
+    paddleocr_model_kwargs,
+)
+
+
+def test_paddleocr_kwargs_from_env(monkeypatch, tmp_path):
+    det = tmp_path / "det"
+    rec = tmp_path / "rec"
+    cls = tmp_path / "cls"
+    for path in (det, rec, cls):
+        path.mkdir()
+    monkeypatch.setenv("PADDLEOCR_DET_MODEL_DIR", str(det))
+    monkeypatch.setenv("PADDLEOCR_REC_MODEL_DIR", str(rec))
+    monkeypatch.setenv("PADDLEOCR_CLS_MODEL_DIR", str(cls))
+
+    assert paddleocr_kwargs_from_env() == {
+        "det_model_dir": str(det),
+        "rec_model_dir": str(rec),
+        "cls_model_dir": str(cls),
+    }
+
+
+def test_paddleocr_kwargs_from_env_rejects_missing_dir(monkeypatch, tmp_path):
+    monkeypatch.setenv("PADDLEOCR_DET_MODEL_DIR", str(tmp_path / "missing"))
+
+    with pytest.raises(FileNotFoundError):
+        paddleocr_kwargs_from_env()
+
+
+def test_paddleocr_kwargs_from_project_local_models(monkeypatch, tmp_path):
+    from app.config import settings
+
+    monkeypatch.delenv("PADDLEOCR_DET_MODEL_DIR", raising=False)
+    monkeypatch.delenv("PADDLEOCR_REC_MODEL_DIR", raising=False)
+    monkeypatch.delenv("PADDLEOCR_CLS_MODEL_DIR", raising=False)
+    monkeypatch.setattr(settings, "storage_dir", tmp_path / "storage")
+    base = settings.storage_dir / "models" / "paddleocr"
+    det = base / "ch_PP-OCRv4_det_infer"
+    rec = base / "ch_PP-OCRv4_rec_infer"
+    cls = base / "ch_ppocr_mobile_v2.0_cls_infer"
+    for path in (det, rec, cls):
+        path.mkdir(parents=True)
+
+    assert paddleocr_kwargs_from_local_models() == {
+        "det_model_dir": str(det),
+        "rec_model_dir": str(rec),
+        "cls_model_dir": str(cls),
+    }
+    assert paddleocr_model_kwargs() == {
+        "det_model_dir": str(det),
+        "rec_model_dir": str(rec),
+        "cls_model_dir": str(cls),
+    }
+
+
+def test_paddleocr_kwargs_from_project_local_models_rejects_missing_set(monkeypatch, tmp_path):
+    from app.config import settings
+
+    monkeypatch.delenv("PADDLEOCR_ALLOW_DOWNLOAD", raising=False)
+    monkeypatch.setattr(settings, "storage_dir", tmp_path / "storage")
+
+    with pytest.raises(FileNotFoundError):
+        paddleocr_model_kwargs()
+
+
+def test_paddleocr_kwargs_allows_download_when_explicitly_enabled(monkeypatch, tmp_path):
+    from app.config import settings
+
+    monkeypatch.setenv("PADDLEOCR_ALLOW_DOWNLOAD", "1")
+    monkeypatch.setattr(settings, "storage_dir", tmp_path / "storage")
+
+    assert paddleocr_model_kwargs() == {}
+
+
+def test_paddleocr_kwargs_from_project_local_models_rejects_partial_set(monkeypatch, tmp_path):
+    from app.config import settings
+
+    monkeypatch.setattr(settings, "storage_dir", tmp_path / "storage")
+    (settings.storage_dir / "models" / "paddleocr" / "ch_PP-OCRv4_det_infer").mkdir(parents=True)
+
+    with pytest.raises(FileNotFoundError):
+        paddleocr_kwargs_from_local_models()
