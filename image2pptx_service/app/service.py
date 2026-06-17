@@ -60,3 +60,19 @@ def convert_image_to_pptx(
         quality_report_path=output_dir / "quality_report.json",
         preview_path=output_dir / "preview.png",
     )
+
+
+def _main() -> None:
+    """Run a local conversion sample when this module is executed directly."""
+    image_path = r"C:\Users\c30046905\Desktop\Office-claw-test\input\test.png"
+    artifacts = convert_image_to_pptx(image_path, mode="balanced")
+    print("Conversion completed.")
+    print(f"job_id: {artifacts.job_id}")
+    print(f"pptx_path: {artifacts.pptx_path}")
+    print(f"manifest_path: {artifacts.manifest_path}")
+    print(f"quality_report_path: {artifacts.quality_report_path}")
+    print(f"preview_path: {artifacts.preview_path}")
+
+
+if __name__ == "__main__":
+    _main()
