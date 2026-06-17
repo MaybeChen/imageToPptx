@@ -11,13 +11,37 @@ source .venv/bin/activate
 poetry install
 ```
 
-Optional OCR: install the Tesseract binary for `pytesseract` (or set `TESSERACT_CMD` to its executable path), or run `poetry install --extras paddleocr` and install the matching `paddlepaddle`/`paddlepaddle-gpu` wheel to enable the PaddleOCR adapter. `setuptools` is included because Paddle/PaddleOCR imports still require it in some environments. If OCR is unavailable, the service degrades to the dummy OCR adapter and records a warning.
+Optional OCR: install the Tesseract binary for `pytesseract` (or set `TESSERACT_CMD` to its executable path), or run `poetry install --extras paddleocr` to install the PaddleOCR adapter with the CPU `paddlepaddle` runtime. `setuptools` is included because Paddle/PaddleOCR imports still require it in some environments. If OCR is unavailable, the service degrades to the dummy OCR adapter and records a warning.
+
+### Tesseract OCR setup
+
+Install Tesseract OCR on the same machine that runs the service, then restart the service process before submitting image conversion jobs.
+
+Windows common setup:
+
+1. Install Tesseract, for example to `C:\Program Files\Tesseract-OCR\tesseract.exe`.
+2. Set `TESSERACT_CMD=C:\Program Files\Tesseract-OCR\tesseract.exe` for the service process.
+3. Restart the service process.
+4. Submit the image conversion task again.
+
+Linux/macOS common setup:
+
+1. Install the system `tesseract` package.
+2. Confirm the service process can find it with `which tesseract`.
+3. If it cannot be found, set `TESSERACT_CMD` to the actual executable path.
 
 
 ## Dependency management
 
-Dependencies are managed with Poetry via `pyproject.toml`. Use `poetry install` for the MVP runtime and test dependencies, or `poetry install --extras paddleocr` when PaddleOCR support is required. If `poetry run python -c "import paddle; paddle.utils.run_check()"` reports `ModuleNotFoundError: No module named 'setuptools'`, rerun `poetry install` after pulling this change or run `poetry add setuptools`.
+Dependencies are managed with Poetry via `pyproject.toml`. Use `poetry install` for the MVP runtime and test dependencies, or `poetry install --extras paddleocr` when CPU PaddleOCR support is required. The core image segmentation path uses `opencv-python-headless`, so server/headless deployments do not need extra OpenCV GUI libraries such as `libGL` just to import `cv2`. The `paddleocr` extra intentionally installs both `paddleocr` and the CPU `paddlepaddle` runtime so the adapter is not left with only the wrapper package. If you need GPU acceleration, install the platform/CUDA-specific `paddlepaddle-gpu` wheel from the official PaddlePaddle index in your deployment image instead of relying on the CPU extra, then install the remaining project dependencies. If `poetry run python -c "import paddle; paddle.utils.run_check()"` reports `ModuleNotFoundError: No module named 'setuptools'`, rerun `poetry install` after pulling this change or run `poetry add setuptools`.
 
+
+
+## Edit-Banana-inspired extraction strategy
+
+The service separates OCR text restoration from visual element segmentation instead of asking OCR to classify every object. The local segment adapter uses lightweight prompt-group-style classes that mirror the Edit-Banana pipeline: simple native `shape` regions, small complex `icon` regions, larger `image`/`chart` assets, and `line`/`arrow` connectors. Manifest generation then merges these layers in the order `background -> shape -> image/icon/chart -> line/arrow -> text`, and filters OCR candidates that mostly overlap icon-like visual regions so icon glyphs are less likely to become editable text boxes.
+
+This is still a local OpenCV heuristic adapter, not a SAM/SAM3 implementation. For production-quality extraction comparable to Edit-Banana, replace or extend `app.pipeline.segment.detect_segments` with a model-backed semantic segmenter that emits the same `SegmentItem` categories.
 
 ## PaddleOCR offline/corporate-network setup
 
