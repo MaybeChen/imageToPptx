@@ -1,7 +1,7 @@
 from pathlib import Path
 from shutil import copyfile
 from app.schemas import *
-from app.utils.colors import dominant_hex
+from app.utils.colors import dominant_hex, text_color_hex
 from app.utils.image import save_crop
 from app.utils.files import write_json
 
@@ -88,8 +88,8 @@ def build_manifest(job, ocr_items, segments, mode='balanced', ppt_width=13.333, 
             elements.append(ManifestElement(id=f'{asset_type}_{idx:03d}', type=asset_type, asset_path=asset_rel, bbox_px=seg.bbox_px, editable=False, confidence=seg.confidence, editable_note='Inserted as independent image asset to preserve complex visual details.'))
     scale = ppt_height / job['height_px'] * 72
     for idx, item in enumerate(ocr_items, 1):
-        fs=max(8, min(60, item.bbox_px[3]*scale*0.9))
-        elements.append(ManifestElement(id=f'text_{idx:03d}', type='text', text=item.text, bbox_px=item.bbox_px, editable=True, confidence=item.confidence, style={'font_size': round(fs,1), 'font_family':'Microsoft YaHei', 'color':'#1F2937', 'bold': False}))
+        fs=max(6, min(54, item.bbox_px[3]*scale*0.72))
+        elements.append(ManifestElement(id=f'text_{idx:03d}', type='text', text=item.text, bbox_px=item.bbox_px, editable=True, confidence=item.confidence, style={'font_size': round(fs,1), 'font_family':'Microsoft YaHei', 'color': text_color_hex(job['source_path'], item.bbox_px), 'bold': False, 'margin_left': 0, 'margin_right': 0, 'margin_top': 0, 'margin_bottom': 0}))
     elements.sort(key=lambda e: {'background':0,'shape':1,'image':2,'icon':2,'chart':2,'line':3,'arrow':3,'text':4}.get(e.type,9))
     quality=ManifestQuality(ocr_text_count=len(ocr_items), native_text_count=sum(e.type=='text' for e in elements), shape_count=sum(e.type=='shape' for e in elements), image_asset_count=sum(e.type in ('image','icon','chart') for e in elements), background_asset_count=sum(e.type=='background' for e in elements), ocr_engine=ocr_engine, warnings=warnings)
     editable_native = quality.native_text_count + quality.shape_count + sum(e.type in ('line','arrow') for e in elements)
