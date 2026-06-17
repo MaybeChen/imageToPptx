@@ -5,7 +5,12 @@ import shutil
 from pathlib import Path
 
 from app.config import settings
-from app.paddle_runtime import configure_paddleocr_runtime, paddleocr_mkldnn_enabled
+from app.paddle_runtime import (
+    configure_loaded_paddle_runtime,
+    configure_paddleocr_runtime,
+    paddleocr_ir_optim_enabled,
+    paddleocr_mkldnn_enabled,
+)
 from app.schemas import OcrItem
 
 
@@ -113,13 +118,17 @@ def paddleocr_model_kwargs() -> dict[str, str]:
 
 def paddleocr_runtime_kwargs() -> dict[str, bool]:
     """Return PaddleOCR runtime knobs that are safe for the CPU default path."""
-    return {'enable_mkldnn': paddleocr_mkldnn_enabled()}
+    return {
+        'enable_mkldnn': paddleocr_mkldnn_enabled(),
+        'ir_optim': paddleocr_ir_optim_enabled(),
+    }
 
 
 def create_paddleocr():
     """Create PaddleOCR with project-local/offline model and stable CPU settings applied."""
     configure_paddleocr_runtime()
     from paddleocr import PaddleOCR
+    configure_loaded_paddle_runtime()
     return PaddleOCR(use_angle_cls=True, lang='ch', **paddleocr_model_kwargs(), **paddleocr_runtime_kwargs())
 
 

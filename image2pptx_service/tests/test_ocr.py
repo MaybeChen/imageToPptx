@@ -1,10 +1,12 @@
 import os
+import sys
 
 import pytest
 
 from app.pipeline.ocr import (
     paddleocr_kwargs_from_env,
     paddleocr_kwargs_from_local_models,
+    configure_loaded_paddle_runtime,
     configure_paddleocr_runtime,
     get_ocr_engine,
     paddleocr_model_kwargs,
@@ -98,7 +100,7 @@ def test_paddleocr_runtime_defaults_disable_mkldnn(monkeypatch):
 
     configure_paddleocr_runtime()
 
-    assert paddleocr_runtime_kwargs() == {"enable_mkldnn": False}
+    assert paddleocr_runtime_kwargs() == {"enable_mkldnn": False, "ir_optim": False}
     assert os.environ["FLAGS_use_mkldnn"] == "0"
     assert os.environ["FLAGS_use_onednn"] == "0"
 
@@ -110,7 +112,7 @@ def test_paddleocr_runtime_allows_explicit_mkldnn(monkeypatch):
 
     configure_paddleocr_runtime()
 
-    assert paddleocr_runtime_kwargs() == {"enable_mkldnn": True}
+    assert paddleocr_runtime_kwargs() == {"enable_mkldnn": True, "ir_optim": False}
     assert "FLAGS_use_mkldnn" not in os.environ
     assert "FLAGS_use_onednn" not in os.environ
 
@@ -124,3 +126,26 @@ def test_tesseract_engine_reports_missing_binary_during_selection(monkeypatch):
     assert engine.name == "dummy"
     assert warnings[0].startswith("Tesseract unavailable: FileNotFoundError")
     assert warnings[-1] == "Using Dummy OCR engine; no native text boxes may be created."
+
+
+def test_paddleocr_runtime_allows_explicit_ir_optim(monkeypatch):
+    monkeypatch.setenv("PADDLEOCR_ENABLE_IR_OPTIM", "1")
+
+    assert paddleocr_runtime_kwargs() == {"enable_mkldnn": False, "ir_optim": True}
+
+
+def test_configure_loaded_paddle_runtime_disables_supported_flags(monkeypatch):
+    calls = []
+
+    class FakePaddle:
+        @staticmethod
+        def set_flags(flags):
+            calls.append(flags)
+
+    monkeypatch.delenv("PADDLEOCR_ENABLE_MKLDNN", raising=False)
+    monkeypatch.setitem(sys.modules, "paddle", FakePaddle())
+
+    configure_loaded_paddle_runtime()
+
+    assert {"FLAGS_use_mkldnn": False} in calls
+    assert {"FLAGS_use_onednn": False} in calls
