@@ -260,7 +260,7 @@ def detect_segments(image_path: Path, mode: str = 'balanced') -> list[SegmentIte
         return []
     engine = os.getenv('SEGMENT_ENGINE', 'opencv').lower()
     try:
-        if engine in ('yolo', 'yolo11'):
+        if engine in ('yolo', 'yolo11', 'yolo26'):
             return detect_segments_with_yolo(image_path)[:30]
         return detect_segments_with_opencv(image_path)
     except Exception:

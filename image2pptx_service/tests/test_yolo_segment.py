@@ -82,3 +82,16 @@ def test_detect_segments_with_yolo_maps_boxes_to_segment_items(monkeypatch, tmp_
     assert [segment.type for segment in segments] == ["shape", "icon", "line"]
     assert segments[0].shape == "rect"
     assert segments[1].bbox_px == [10.0, 20.0, 30.0, 40.0]
+
+
+def test_detect_segments_accepts_yolo26_engine(monkeypatch, tmp_path):
+    from app.pipeline.segment import detect_segments
+
+    image = tmp_path / "image.png"
+    image.write_text("fake")
+    monkeypatch.setenv("SEGMENT_ENGINE", "yolo26")
+    monkeypatch.setattr("app.pipeline.segment.detect_segments_with_yolo", lambda path: [
+        __import__("app.schemas", fromlist=["SegmentItem"]).SegmentItem(type="icon", bbox_px=[1, 2, 3, 4], confidence=0.9)
+    ])
+
+    assert detect_segments(image)[0].type == "icon"
