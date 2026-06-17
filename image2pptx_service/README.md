@@ -40,6 +40,26 @@ poetry run python run.py
   - `/download/{job_id}/quality`
   - `/download/{job_id}/preview`
 
+
+## Direct Python usage
+
+For local debugging or tests, call the conversion pipeline directly without starting FastAPI:
+
+```python
+from app.service import convert_image_to_pptx
+
+artifacts = convert_image_to_pptx(
+    "storage/samples/test.png",
+    mode="balanced",
+    job_id="local-debug",
+)
+print(artifacts.pptx_path)
+print(artifacts.manifest_path)
+print(artifacts.quality_report_path)
+```
+
+The helper returns a `ConversionArtifacts` dataclass and uses the same preprocess → OCR → segmentation → manifest → PPTX → preview → quality pipeline as `/convert`.
+
 ## curl example
 
 ```bash

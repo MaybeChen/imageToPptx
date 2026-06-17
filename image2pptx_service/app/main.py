@@ -4,8 +4,8 @@ from fastapi import FastAPI, UploadFile, File, Form, HTTPException
 from fastapi.responses import FileResponse
 from app.config import settings
 from app.schemas import ConvertResponse
-from app.pipeline.preprocess import prepare_image, UnsupportedImageFormat
-from app.workers.tasks import run_conversion
+from app.pipeline.preprocess import UnsupportedImageFormat
+from app.service import convert_image_to_pptx
 
 app = FastAPI(title='image-to-editable-pptx MVP', version='0.1.0')
 
@@ -18,13 +18,12 @@ async def convert(file: UploadFile = File(...), mode: str = Form('balanced'), pp
     with tempfile.NamedTemporaryFile(delete=False, suffix=Path(file.filename or 'input.png').suffix) as tmp:
         tmp.write(await file.read()); tmp_path=Path(tmp.name)
     try:
-        job=prepare_image(tmp_path, file.filename)
-        run_conversion(job, mode, ppt_width, ppt_height)
+        artifacts = convert_image_to_pptx(tmp_path, original_name=file.filename, mode=mode, ppt_width=ppt_width, ppt_height=ppt_height)
     except UnsupportedImageFormat as e:
         raise HTTPException(400, str(e))
     finally:
         tmp_path.unlink(missing_ok=True)
-    jid=job['job_id']
+    jid=artifacts.job_id
     return ConvertResponse(job_id=jid,status='completed',pptx_url=f'/download/{jid}/pptx',manifest_url=f'/download/{jid}/manifest',quality_report_url=f'/download/{jid}/quality',preview_url=f'/download/{jid}/preview')
 
 DOWNLOADS={'pptx':('result.pptx','application/vnd.openxmlformats-officedocument.presentationml.presentation'),'manifest':('slide_manifest.json','application/json'),'quality':('quality_report.json','application/json'),'preview':('preview.png','image/png')}
