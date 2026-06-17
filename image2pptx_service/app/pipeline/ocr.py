@@ -101,10 +101,24 @@ def paddleocr_model_kwargs() -> dict[str, str]:
     return paddleocr_kwargs_from_local_models(require_complete=True)
 
 
+def configure_paddleocr_runtime() -> None:
+    """Disable Paddle oneDNN/MKLDNN by default to avoid CPU fused_conv2d runtime errors."""
+    if os.getenv('PADDLEOCR_ENABLE_MKLDNN') == '1':
+        return
+    os.environ.setdefault('FLAGS_use_mkldnn', '0')
+    os.environ.setdefault('FLAGS_use_onednn', '0')
+
+
+def paddleocr_runtime_kwargs() -> dict[str, bool]:
+    """Return PaddleOCR runtime knobs that are safe for the CPU default path."""
+    return {'enable_mkldnn': os.getenv('PADDLEOCR_ENABLE_MKLDNN') == '1'}
+
+
 def create_paddleocr():
-    """Create PaddleOCR with project-local/offline model settings applied."""
+    """Create PaddleOCR with project-local/offline model and stable CPU settings applied."""
+    configure_paddleocr_runtime()
     from paddleocr import PaddleOCR
-    return PaddleOCR(use_angle_cls=True, lang='ch', **paddleocr_model_kwargs())
+    return PaddleOCR(use_angle_cls=True, lang='ch', **paddleocr_model_kwargs(), **paddleocr_runtime_kwargs())
 
 
 class PaddleOcrEngine(OcrEngine):
