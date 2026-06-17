@@ -11,12 +11,29 @@ source .venv/bin/activate
 poetry install
 ```
 
-Optional OCR: install the Tesseract binary for `pytesseract` (or set `TESSERACT_CMD` to its executable path), or run `poetry install --extras paddleocr` and install the matching `paddlepaddle`/`paddlepaddle-gpu` wheel to enable the PaddleOCR adapter. `setuptools` is included because Paddle/PaddleOCR imports still require it in some environments. If OCR is unavailable, the service degrades to the dummy OCR adapter and records a warning.
+Optional OCR: install the Tesseract binary for `pytesseract` (or set `TESSERACT_CMD` to its executable path), or run `poetry install --extras paddleocr` to install the PaddleOCR adapter with the CPU `paddlepaddle` runtime. `setuptools` is included because Paddle/PaddleOCR imports still require it in some environments. If OCR is unavailable, the service degrades to the dummy OCR adapter and records a warning.
+
+### Tesseract OCR setup
+
+Install Tesseract OCR on the same machine that runs the service, then restart the service process before submitting image conversion jobs.
+
+Windows common setup:
+
+1. Install Tesseract, for example to `C:\Program Files\Tesseract-OCR\tesseract.exe`.
+2. Set `TESSERACT_CMD=C:\Program Files\Tesseract-OCR\tesseract.exe` for the service process.
+3. Restart the service process.
+4. Submit the image conversion task again.
+
+Linux/macOS common setup:
+
+1. Install the system `tesseract` package.
+2. Confirm the service process can find it with `which tesseract`.
+3. If it cannot be found, set `TESSERACT_CMD` to the actual executable path.
 
 
 ## Dependency management
 
-Dependencies are managed with Poetry via `pyproject.toml`. Use `poetry install` for the MVP runtime and test dependencies, or `poetry install --extras paddleocr` when PaddleOCR support is required. If `poetry run python -c "import paddle; paddle.utils.run_check()"` reports `ModuleNotFoundError: No module named 'setuptools'`, rerun `poetry install` after pulling this change or run `poetry add setuptools`.
+Dependencies are managed with Poetry via `pyproject.toml`. Use `poetry install` for the MVP runtime and test dependencies, or `poetry install --extras paddleocr` when CPU PaddleOCR support is required. The `paddleocr` extra intentionally installs both `paddleocr` and the CPU `paddlepaddle` runtime so the adapter is not left with only the wrapper package. If you need GPU acceleration, install the platform/CUDA-specific `paddlepaddle-gpu` wheel from the official PaddlePaddle index in your deployment image instead of relying on the CPU extra, then install the remaining project dependencies. If `poetry run python -c "import paddle; paddle.utils.run_check()"` reports `ModuleNotFoundError: No module named 'setuptools'`, rerun `poetry install` after pulling this change or run `poetry add setuptools`.
 
 
 ## PaddleOCR offline/corporate-network setup
