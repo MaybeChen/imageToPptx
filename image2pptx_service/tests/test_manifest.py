@@ -34,3 +34,35 @@ def test_filter_ocr_items_for_manifest_keeps_text_over_large_image_region():
 
     assert removed == 0
     assert kept == ocr_items
+
+from PIL import Image
+
+from app.pipeline.manifest import build_manifest
+
+
+def test_build_manifest_preserves_icon_asset_type(tmp_path):
+    source = tmp_path / "source.png"
+    Image.new("RGB", (200, 120), "white").save(source)
+    job_root = tmp_path / "job"
+    (job_root / "assets").mkdir(parents=True)
+    output = job_root / "output"
+    output.mkdir()
+    job = {
+        "source_path": source,
+        "job_root": job_root,
+        "width_px": 200,
+        "height_px": 120,
+        "file_name": "source.png",
+        "dirs": {"output": output},
+    }
+
+    manifest, _ = build_manifest(
+        job,
+        ocr_items=[],
+        segments=[SegmentItem(type="icon", bbox_px=[20, 20, 30, 30], confidence=0.8)],
+    )
+
+    icon = next(element for element in manifest.elements if element.type == "icon")
+    assert icon.id == "icon_001"
+    assert icon.asset_path == "assets/icon_001.png"
+    assert manifest.quality.image_asset_count == 1
