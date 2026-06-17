@@ -11,7 +11,7 @@ source .venv/bin/activate
 poetry install
 ```
 
-Optional OCR: install the Tesseract binary for `pytesseract`, or run `poetry install --extras paddleocr` and install the matching `paddlepaddle`/`paddlepaddle-gpu` wheel to enable the PaddleOCR adapter. `setuptools` is included because Paddle/PaddleOCR imports still require it in some environments. If OCR is unavailable, the service degrades to the dummy OCR adapter and records a warning.
+Optional OCR: install the Tesseract binary for `pytesseract` (or set `TESSERACT_CMD` to its executable path), or run `poetry install --extras paddleocr` and install the matching `paddlepaddle`/`paddlepaddle-gpu` wheel to enable the PaddleOCR adapter. `setuptools` is included because Paddle/PaddleOCR imports still require it in some environments. If OCR is unavailable, the service degrades to the dummy OCR adapter and records a warning.
 
 
 ## Dependency management
@@ -35,7 +35,7 @@ Then verify from `image2pptx_service` using the project helper. Do not call `Pad
 poetry run python -c "from app.pipeline.ocr import create_paddleocr; create_paddleocr(); print('ok')"
 ```
 
-The service first uses optional `PADDLEOCR_DET_MODEL_DIR`, `PADDLEOCR_REC_MODEL_DIR`, and `PADDLEOCR_CLS_MODEL_DIR` overrides when present, otherwise it automatically uses the fixed project-local `storage/models/paddleocr` directories. By default the adapter fails fast if the local model set is missing or incomplete, so it will not silently trigger PaddleOCR downloads. Set `PADDLEOCR_ALLOW_DOWNLOAD=1` only if you intentionally want PaddleOCR to download models at startup. The adapter also disables Paddle oneDNN/MKLDNN by default to avoid CPU `fused_conv2d` runtime errors such as `OneDnnContext does not have the input Filter`; set `PADDLEOCR_ENABLE_MKLDNN=1` only if you have verified that acceleration path works in your runtime. Large model files are ignored by git; keep only `storage/models/.gitkeep` in source control. The `No ccache found` message is only a Paddle warning and is not the reason OCR initialization fails.
+The service first uses optional `PADDLEOCR_DET_MODEL_DIR`, `PADDLEOCR_REC_MODEL_DIR`, and `PADDLEOCR_CLS_MODEL_DIR` overrides when present, otherwise it automatically uses the fixed project-local `storage/models/paddleocr` directories. By default the adapter fails fast if the local model set is missing or incomplete, so it will not silently trigger PaddleOCR downloads. Set `PADDLEOCR_ALLOW_DOWNLOAD=1` only if you intentionally want PaddleOCR to download models at startup. The app package applies Paddle runtime flags before PaddleOCR is imported and force-disables Paddle oneDNN/MKLDNN by default to avoid CPU `fused_conv2d` runtime errors such as `OneDnnContext does not have the input Filter`; set `PADDLEOCR_ENABLE_MKLDNN=1` before service startup only if you have verified that acceleration path works in your runtime. Large model files are ignored by git; keep only `storage/models/.gitkeep` in source control. The `No ccache found` message is only a Paddle warning and is not the reason OCR initialization fails.
 
 ## Start service
 

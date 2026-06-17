@@ -1,9 +1,11 @@
 from __future__ import annotations
 
 import os
+import shutil
 from pathlib import Path
 
 from app.config import settings
+from app.paddle_runtime import configure_paddleocr_runtime, paddleocr_mkldnn_enabled
 from app.schemas import OcrItem
 
 
@@ -20,6 +22,14 @@ class DummyOcrEngine(OcrEngine):
 
 class TesseractOcrEngine(OcrEngine):
     name = 'tesseract'
+    def __init__(self):
+        import pytesseract
+        tesseract_cmd = os.getenv('TESSERACT_CMD')
+        if tesseract_cmd:
+            pytesseract.pytesseract.tesseract_cmd = tesseract_cmd
+        elif not shutil.which('tesseract'):
+            raise FileNotFoundError('tesseract is not installed or is not in PATH; install it or set TESSERACT_CMD')
+
     def detect(self, image_path: str) -> list[OcrItem]:
         import pytesseract
         from PIL import Image
@@ -101,17 +111,9 @@ def paddleocr_model_kwargs() -> dict[str, str]:
     return paddleocr_kwargs_from_local_models(require_complete=True)
 
 
-def configure_paddleocr_runtime() -> None:
-    """Disable Paddle oneDNN/MKLDNN by default to avoid CPU fused_conv2d runtime errors."""
-    if os.getenv('PADDLEOCR_ENABLE_MKLDNN') == '1':
-        return
-    os.environ.setdefault('FLAGS_use_mkldnn', '0')
-    os.environ.setdefault('FLAGS_use_onednn', '0')
-
-
 def paddleocr_runtime_kwargs() -> dict[str, bool]:
     """Return PaddleOCR runtime knobs that are safe for the CPU default path."""
-    return {'enable_mkldnn': os.getenv('PADDLEOCR_ENABLE_MKLDNN') == '1'}
+    return {'enable_mkldnn': paddleocr_mkldnn_enabled()}
 
 
 def create_paddleocr():

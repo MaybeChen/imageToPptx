@@ -1,0 +1,3 @@
+from app.paddle_runtime import configure_paddleocr_runtime
+
+configure_paddleocr_runtime()
