@@ -11,13 +11,54 @@ source .venv/bin/activate
 poetry install
 ```
 
-Optional OCR: install the Tesseract binary for `pytesseract` (or set `TESSERACT_CMD` to its executable path), or run `poetry install --extras paddleocr` and install the matching `paddlepaddle`/`paddlepaddle-gpu` wheel to enable the PaddleOCR adapter. `setuptools` is included because Paddle/PaddleOCR imports still require it in some environments. If OCR is unavailable, the service degrades to the dummy OCR adapter and records a warning.
+Optional OCR: install the Tesseract binary for `pytesseract` (or set `TESSERACT_CMD` to its executable path), or run `poetry install --extras paddleocr` to install the PaddleOCR adapter with the CPU `paddlepaddle` runtime. `setuptools` is included because Paddle/PaddleOCR imports still require it in some environments. If OCR is unavailable, the service degrades to the dummy OCR adapter and records a warning.
+
+### Tesseract OCR setup
+
+Install Tesseract OCR on the same machine that runs the service, then restart the service process before submitting image conversion jobs.
+
+Windows common setup:
+
+1. Install Tesseract, for example to `C:\Program Files\Tesseract-OCR\tesseract.exe`.
+2. Set `TESSERACT_CMD=C:\Program Files\Tesseract-OCR\tesseract.exe` for the service process.
+3. Restart the service process.
+4. Submit the image conversion task again.
+
+Linux/macOS common setup:
+
+1. Install the system `tesseract` package.
+2. Confirm the service process can find it with `which tesseract`.
+3. If it cannot be found, set `TESSERACT_CMD` to the actual executable path.
 
 
 ## Dependency management
 
-Dependencies are managed with Poetry via `pyproject.toml`. Use `poetry install` for the MVP runtime and test dependencies, or `poetry install --extras paddleocr` when PaddleOCR support is required. If `poetry run python -c "import paddle; paddle.utils.run_check()"` reports `ModuleNotFoundError: No module named 'setuptools'`, rerun `poetry install` after pulling this change or run `poetry add setuptools`.
+Dependencies are managed with Poetry via `pyproject.toml`. Use `poetry install` for the MVP runtime and test dependencies, or `poetry install --extras paddleocr` when CPU PaddleOCR support is required. The core image segmentation path uses `opencv-python-headless`, so server/headless deployments do not need extra OpenCV GUI libraries such as `libGL` just to import `cv2`. The `paddleocr` extra intentionally installs both `paddleocr` and the CPU `paddlepaddle` runtime so the adapter is not left with only the wrapper package. If you need GPU acceleration, install the platform/CUDA-specific `paddlepaddle-gpu` wheel from the official PaddlePaddle index in your deployment image instead of relying on the CPU extra, then install the remaining project dependencies. If `poetry run python -c "import paddle; paddle.utils.run_check()"` reports `ModuleNotFoundError: No module named 'setuptools'`, rerun `poetry install` after pulling this change or run `poetry add setuptools`.
 
+
+
+## Edit-Banana-inspired extraction strategy
+
+The service separates OCR text restoration from visual element segmentation instead of asking OCR to classify every object. The local segment adapter uses lightweight prompt-group-style classes that mirror the Edit-Banana pipeline: simple native `shape` regions, small complex `icon` regions, larger `image`/`chart` assets, and `line`/`arrow` connectors. Manifest generation then merges these layers in the order `background -> shape -> image/icon/chart -> line/arrow -> text`, and filters OCR candidates that mostly overlap icon-like visual regions so icon glyphs are less likely to become editable text boxes.
+
+This is still a local OpenCV heuristic adapter, not a SAM/SAM3 implementation. For production-quality extraction comparable to Edit-Banana, replace or extend `app.pipeline.segment.detect_segments` with a model-backed semantic segmenter that emits the same `SegmentItem` categories.
+
+OCR post-processing is intentionally conservative about compact one- or two-character OCR candidates because icons are often recognized as glyphs. Set `OCR_FILTER_SHORT_GLYPHS=0` if your slides contain many real single-character labels, set `OCR_FILTER_VISUAL_ASSET_TEXT=0` if you intentionally want OCR text inside icon/chart/image assets, adjust `OCR_SHORT_TEXT_MAX_AREA_RATIO`, `OCR_VISUAL_ASSET_MAX_AREA_RATIO`, and `OCR_VISUAL_ASSET_MIN_COVERAGE` for filtering thresholds, and tune `OCR_FONT_SCALE` if a deployment's OCR boxes consistently produce text that is too large or too small. For complete visual restoration of fonts, weights, and icon/text boundaries, add a model-backed layout/segmentation adapter rather than relying on OCR alone.
+
+
+## YOLO CPU segmentation setup
+
+For CPU-friendly model-backed segmentation, install the optional YOLO runtime and put your trained YOLO26 or YOLO11 segmentation model under the fixed project-local directory. Prefer YOLO26 for new CPU deployments when your `ultralytics` version and model export support it; keep YOLO11 for stable existing trained weights.
+
+```bash
+poetry install --extras yolo
+mkdir -p storage/models/yolo
+# copy one of: storage/models/yolo/*.pt, *.onnx, or *.engine
+# examples: yolo26n-seg.pt, yolo11n-seg.pt, or your custom trained export
+SEGMENT_ENGINE=yolo poetry run python run.py
+```
+
+The service loads the first model file in `storage/models/yolo` by default, or `YOLO_MODEL_PATH` when set. `SEGMENT_ENGINE=yolo`, `SEGMENT_ENGINE=yolo11`, and `SEGMENT_ENGINE=yolo26` all use the same Ultralytics adapter. Tune inference with `YOLO_CONF`, `YOLO_IOU`, `YOLO_IMGSZ`, and `YOLO_MAX_DET`. Model class names are mapped into manifest segment types such as `icon`, `image`, `chart`, `shape`, `line`, `arrow`, and `background`; train the model with those names (or common aliases like `logo`, `picture`, `rectangle`, `table`, and `connector`) for best results. `text_region`/`text` labels are ignored because OCR owns native text generation, and `background` detections are kept as a layer without suppressing foreground objects. For this PPT/image-to-PPTX use case, a custom-trained `*-seg` model on slide screenshots is more important than the base YOLO generation, but YOLO26 is the recommended default for new CPU deployments because it improves CPU/edge efficiency and small-object coverage over YOLO11. If the YOLO runtime or model is unavailable, keep `SEGMENT_ENGINE=opencv` to use the built-in fallback.
 
 ## PaddleOCR offline/corporate-network setup
 
