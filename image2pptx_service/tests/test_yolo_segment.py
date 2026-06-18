@@ -100,7 +100,7 @@ def test_detect_segments_accepts_yolo26_engine(monkeypatch, tmp_path):
 def test_label_to_segment_type_ignores_text_region_and_maps_table():
     assert _label_to_segment_type("text_region") is None
     assert _label_to_segment_type("text") is None
-    assert _label_to_segment_type("table") == "chart"
+    assert _label_to_segment_type("table") == "table"
 
 
 def test_merge_segments_by_layer_keeps_foreground_inside_background():

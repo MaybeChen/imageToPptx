@@ -10,6 +10,7 @@ SEGMENT_LAYER_PRIORITY = {
     'image': 2,
     'icon': 2,
     'chart': 2,
+    'table': 2,
     'line': 3,
     'arrow': 3,
 }
@@ -23,7 +24,7 @@ YOLO_LABEL_TYPE_MAP = {
     'chart': 'chart',
     'diagram': 'chart',
     'graph': 'chart',
-    'table': 'chart',
+    'table': 'table',
     'shape': 'shape',
     'rectangle': 'shape',
     'rounded_rectangle': 'shape',

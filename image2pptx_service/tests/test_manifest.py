@@ -159,3 +159,31 @@ def test_filter_ocr_items_for_manifest_drops_text_inside_small_image_asset(monke
 
     assert removed == 1
     assert kept == []
+
+
+def test_build_manifest_preserves_table_asset_type(tmp_path):
+    source = tmp_path / "table_source.png"
+    Image.new("RGB", (200, 120), "white").save(source)
+    job_root = tmp_path / "table_job"
+    (job_root / "assets").mkdir(parents=True)
+    output = job_root / "output"
+    output.mkdir()
+    job = {
+        "source_path": source,
+        "job_root": job_root,
+        "width_px": 200,
+        "height_px": 120,
+        "file_name": "table_source.png",
+        "dirs": {"output": output},
+    }
+
+    manifest, _ = build_manifest(
+        job,
+        ocr_items=[],
+        segments=[SegmentItem(type="table", bbox_px=[20, 20, 80, 50], confidence=0.8)],
+    )
+
+    table = next(element for element in manifest.elements if element.type == "table")
+    assert table.id == "table_001"
+    assert table.asset_path == "assets/table_001.png"
+    assert manifest.quality.image_asset_count == 1
