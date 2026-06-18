@@ -10,7 +10,7 @@ class OcrItem(BaseModel):
     confidence: float = 0.0
 
 class SegmentItem(BaseModel):
-    type: Literal['shape','image','line','arrow','background','icon','chart']
+    type: Literal['shape','image','line','arrow','background','icon','chart','table']
     bbox_px: BBox
     confidence: float = 0.0
     shape: Optional[str] = None
