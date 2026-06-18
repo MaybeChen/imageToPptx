@@ -68,17 +68,40 @@ def _ocr_item_overlaps_icon(item, icon_segments):
     return any(_intersection_area(item.bbox_px, seg.bbox_px) / item_area >= 0.6 for seg in icon_segments)
 
 
+
+
+def _is_ocr_suppression_segment(seg, slide_area) -> bool:
+    if seg.type == 'background':
+        return False
+    if seg.type in ('icon', 'chart'):
+        return True
+    if seg.type != 'image':
+        return False
+    area_ratio = _area(seg.bbox_px) / max(1, slide_area)
+    return area_ratio <= _env_float('OCR_VISUAL_ASSET_MAX_AREA_RATIO', 0.12)
+
+
+def _ocr_item_overlaps_suppression_zone(item, suppression_segments) -> bool:
+    item_area = _area(item.bbox_px)
+    if item_area <= 0:
+        return False
+    min_coverage = _env_float('OCR_VISUAL_ASSET_MIN_COVERAGE', 0.6)
+    return any(_intersection_area(item.bbox_px, seg.bbox_px) / item_area >= min_coverage for seg in suppression_segments)
+
 def filter_ocr_items_for_manifest(ocr_items, segments, width_px, height_px):
     """Drop OCR boxes that are more likely to be icon glyphs than slide text."""
     slide_area = width_px * height_px
     icon_segments = [seg for seg in segments if _is_icon_like_segment(seg, slide_area)]
+    suppression_segments = [seg for seg in segments if _is_ocr_suppression_segment(seg, slide_area)]
     kept = []
     removed = 0
     filter_short_glyphs = _env_flag('OCR_FILTER_SHORT_GLYPHS', True)
+    filter_visual_assets = _env_flag('OCR_FILTER_VISUAL_ASSET_TEXT', True)
     for item in ocr_items:
-        overlaps_icon = bool(icon_segments) and _ocr_item_overlaps_icon(item, icon_segments)
+        overlaps_icon = filter_visual_assets and bool(icon_segments) and _ocr_item_overlaps_icon(item, icon_segments)
+        overlaps_visual_asset = filter_visual_assets and _ocr_item_overlaps_suppression_zone(item, suppression_segments)
         compact_glyph = filter_short_glyphs and _compact_short_text_candidate(item, slide_area)
-        if overlaps_icon or compact_glyph:
+        if overlaps_icon or overlaps_visual_asset or compact_glyph:
             removed += 1
         else:
             kept.append(item)
@@ -90,7 +113,7 @@ def build_manifest(job, ocr_items, segments, mode='balanced', ppt_width=13.333, 
     warnings = list(warnings or [])
     ocr_items, filtered_icon_ocr_count = filter_ocr_items_for_manifest(ocr_items, segments, job['width_px'], job['height_px'])
     if filtered_icon_ocr_count:
-        warnings.append(f'Filtered {filtered_icon_ocr_count} OCR text candidate(s) that looked like icon glyphs or overlapped icon-like image regions.')
+        warnings.append(f'Filtered {filtered_icon_ocr_count} OCR text candidate(s) that looked like icon glyphs or overlapped icon/chart/image visual asset regions.')
 
     background_rel = 'assets/background.png'
     copyfile(job['source_path'], job['job_root'] / background_rel)

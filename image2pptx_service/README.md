@@ -43,7 +43,7 @@ The service separates OCR text restoration from visual element segmentation inst
 
 This is still a local OpenCV heuristic adapter, not a SAM/SAM3 implementation. For production-quality extraction comparable to Edit-Banana, replace or extend `app.pipeline.segment.detect_segments` with a model-backed semantic segmenter that emits the same `SegmentItem` categories.
 
-OCR post-processing is intentionally conservative about compact one- or two-character OCR candidates because icons are often recognized as glyphs. Set `OCR_FILTER_SHORT_GLYPHS=0` if your slides contain many real single-character labels, adjust `OCR_SHORT_TEXT_MAX_AREA_RATIO` for the short-text area threshold, and tune `OCR_FONT_SCALE` if a deployment's OCR boxes consistently produce text that is too large or too small. For complete visual restoration of fonts, weights, and icon/text boundaries, add a model-backed layout/segmentation adapter rather than relying on OCR alone.
+OCR post-processing is intentionally conservative about compact one- or two-character OCR candidates because icons are often recognized as glyphs. Set `OCR_FILTER_SHORT_GLYPHS=0` if your slides contain many real single-character labels, set `OCR_FILTER_VISUAL_ASSET_TEXT=0` if you intentionally want OCR text inside icon/chart/image assets, adjust `OCR_SHORT_TEXT_MAX_AREA_RATIO`, `OCR_VISUAL_ASSET_MAX_AREA_RATIO`, and `OCR_VISUAL_ASSET_MIN_COVERAGE` for filtering thresholds, and tune `OCR_FONT_SCALE` if a deployment's OCR boxes consistently produce text that is too large or too small. For complete visual restoration of fonts, weights, and icon/text boundaries, add a model-backed layout/segmentation adapter rather than relying on OCR alone.
 
 
 ## YOLO CPU segmentation setup
