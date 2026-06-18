@@ -95,3 +95,24 @@ def test_detect_segments_accepts_yolo26_engine(monkeypatch, tmp_path):
     ])
 
     assert detect_segments(image)[0].type == "icon"
+
+
+def test_label_to_segment_type_ignores_text_region_and_maps_table():
+    assert _label_to_segment_type("text_region") is None
+    assert _label_to_segment_type("text") is None
+    assert _label_to_segment_type("table") == "chart"
+
+
+def test_merge_segments_by_layer_keeps_foreground_inside_background():
+    from app.pipeline.segment import merge_segments_by_layer
+    from app.schemas import SegmentItem
+
+    items = [
+        SegmentItem(type="background", bbox_px=[0, 0, 1000, 600], confidence=0.9),
+        SegmentItem(type="icon", bbox_px=[100, 100, 40, 40], confidence=0.8),
+        SegmentItem(type="shape", shape="rect", bbox_px=[200, 100, 200, 80], confidence=0.8),
+    ]
+
+    merged = merge_segments_by_layer(items)
+
+    assert [item.type for item in merged] == ["background", "shape", "icon"]

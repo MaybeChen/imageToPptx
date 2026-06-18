@@ -23,6 +23,7 @@ YOLO_LABEL_TYPE_MAP = {
     'chart': 'chart',
     'diagram': 'chart',
     'graph': 'chart',
+    'table': 'chart',
     'shape': 'shape',
     'rectangle': 'shape',
     'rounded_rectangle': 'shape',
@@ -37,6 +38,8 @@ YOLO_LABEL_TYPE_MAP = {
     'panel': 'background',
     'container': 'background',
 }
+
+YOLO_IGNORED_LABELS = {'text', 'text_region', 'text region', 'ocr', 'word'}
 
 YOLO_SHAPE_LABELS = {
     'rectangle': 'rect',
@@ -150,6 +153,10 @@ def merge_segments_by_layer(items: list[SegmentItem]) -> list[SegmentItem]:
     for item in ordered:
         duplicate = False
         for existing in kept:
+            if existing.type == 'background' and item.type != 'background':
+                continue
+            if item.type == 'background' and existing.type != 'background':
+                continue
             if _coverage(item.bbox_px, existing.bbox_px) >= 0.85:
                 duplicate = True
                 break
@@ -179,13 +186,19 @@ def find_yolo_model_path() -> Path:
     return sorted(candidates)[0]
 
 
-def _label_to_segment_type(label: str) -> str:
-    normalized = label.lower().replace('-', '_').strip()
+def _normalize_yolo_label(label: str) -> str:
+    return label.lower().replace('-', '_').strip()
+
+
+def _label_to_segment_type(label: str) -> str | None:
+    normalized = _normalize_yolo_label(label)
+    if normalized in YOLO_IGNORED_LABELS or normalized.replace('_', ' ') in YOLO_IGNORED_LABELS:
+        return None
     return YOLO_LABEL_TYPE_MAP.get(normalized, YOLO_LABEL_TYPE_MAP.get(normalized.replace('_', ' '), 'image'))
 
 
 def _label_to_shape(label: str) -> str | None:
-    normalized = label.lower().replace('-', '_').strip()
+    normalized = _normalize_yolo_label(label)
     return YOLO_SHAPE_LABELS.get(normalized) or YOLO_SHAPE_LABELS.get(normalized.replace('_', ' '))
 
 
@@ -224,6 +237,8 @@ def detect_segments_with_yolo(image_path: Path) -> list[SegmentItem]:
             cls_id = int(_value_to_float(getattr(box, 'cls', 0)))
             label = str(result_names.get(cls_id, cls_id)) if isinstance(result_names, dict) else str(cls_id)
             seg_type = _label_to_segment_type(label)
+            if seg_type is None:
+                continue
             confidence = _value_to_float(getattr(box, 'conf', 0.0))
             bbox = _xyxy_to_bbox(getattr(box, 'xyxy')[0] if hasattr(getattr(box, 'xyxy'), '__getitem__') else getattr(box, 'xyxy'))
             if bbox[2] <= 0 or bbox[3] <= 0:
