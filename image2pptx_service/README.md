@@ -48,17 +48,18 @@ OCR post-processing is intentionally conservative about compact one- or two-char
 
 ## YOLO CPU segmentation setup
 
-For CPU-friendly model-backed segmentation, install the optional YOLO runtime and put your trained YOLO26 or YOLO11 segmentation model under the fixed project-local directory. Prefer YOLO26 for new CPU deployments when your `ultralytics` version and model export support it; keep YOLO11 for stable existing trained weights.
+For CPU-friendly model-backed segmentation, put your trained YOLO26 or YOLO11 detection model under the fixed project-local directory. The Ultralytics runtime is installed with the default project dependencies so a local `best.pt` can be used immediately after `poetry install`. Prefer YOLO26 for new CPU deployments when your `ultralytics` version and model export support it; keep YOLO11 for stable existing trained weights.
 
 ```bash
-poetry install --extras yolo
+poetry install
 mkdir -p storage/models/yolo
-# copy one of: storage/models/yolo/*.pt, *.onnx, or *.engine
-# examples: yolo26n-seg.pt, yolo11n-seg.pt, or your custom trained export
-SEGMENT_ENGINE=yolo poetry run python run.py
+# copy one of: storage/models/yolo/best.pt, *.pt, *.onnx, or *.engine
+# alternatively mount repository-root models/yolo/best.pt
+# examples: best.pt, yolo26n.pt, yolo11n.pt, yolo26n-seg.pt, yolo11n-seg.pt, or your custom export
+poetry run python run.py
 ```
 
-The service loads the first model file in `storage/models/yolo` by default, or `YOLO_MODEL_PATH` when set. `SEGMENT_ENGINE=yolo`, `SEGMENT_ENGINE=yolo11`, and `SEGMENT_ENGINE=yolo26` all use the same Ultralytics adapter. Tune inference with `YOLO_CONF`, `YOLO_IOU`, `YOLO_IMGSZ`, and `YOLO_MAX_DET`. Model class names are mapped into manifest segment types such as `icon`, `image`, `chart`, `table`, `shape`, `line`, `arrow`, and `background`; train the model with those names (or common aliases like `logo`, `picture`, `rectangle`, `table`, and `connector`) for best results. `table` is preserved as its own image-backed asset type. `text_region`/`text` labels are ignored because OCR owns native text generation, and `background` detections are kept as a layer without suppressing foreground objects. For this PPT/image-to-PPTX use case, a custom-trained `*-seg` model on slide screenshots is more important than the base YOLO generation, but YOLO26 is the recommended default for new CPU deployments because it improves CPU/edge efficiency and small-object coverage over YOLO11. If the YOLO runtime or model is unavailable, keep `SEGMENT_ENGINE=opencv` to use the built-in fallback.
+By default, `SEGMENT_ENGINE=auto` tries a local YOLO model first when one is present, then falls back to OpenCV if the YOLO model fails or emits no usable elements. The service prefers a `best.pt` file and searches `storage/models/yolo`, `models/yolo` inside the service directory, and repository-root `models/yolo`; `YOLO_MODEL_PATH` still overrides all project-local locations. `SEGMENT_ENGINE=yolo`, `SEGMENT_ENGINE=yolo11`, and `SEGMENT_ENGINE=yolo26` force the same Ultralytics adapter. Segmentation prints `[segment] ...` messages to stdout/logs so you can see whether YOLO was selected, which model was loaded, how many YOLO items were produced, and whether OpenCV fallback was used. Tune inference with `YOLO_CONF`, `YOLO_IOU`, `YOLO_IMGSZ`, and `YOLO_MAX_DET`. Model class names are mapped into manifest segment types such as `icon`, `image`, `chart`, `table`, `shape`, `line`, `arrow`, and `background`; train the model with those names (or common aliases like `logo`, `picture`, `rectangle`, `table`, and `connector`) for best results. `table` is preserved as its own image-backed asset type. `text_region`/`text` labels are ignored because OCR owns native text generation, and `background` detections are kept as a layer without suppressing foreground objects. For this PPT/image-to-PPTX use case, a custom-trained `*-seg` model on slide screenshots is more important than the base YOLO generation, but YOLO26 is the recommended default for new CPU deployments because it improves CPU/edge efficiency and small-object coverage over YOLO11. If the YOLO model is unavailable or you intentionally want the heuristic path, keep `SEGMENT_ENGINE=opencv` to use the built-in fallback.
 
 ## PaddleOCR offline/corporate-network setup
 
