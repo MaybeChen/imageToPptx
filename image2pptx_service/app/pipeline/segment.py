@@ -166,8 +166,43 @@ def merge_segments_by_layer(items: list[SegmentItem]) -> list[SegmentItem]:
     return kept
 
 
+def yolo_model_dirs() -> list[Path]:
+    """Return supported project-local YOLO model directories in priority order.
+
+    Historically the service documented storage/models/yolo. Some deployments
+    mount models/yolo at the repository root, so support both without requiring
+    an environment variable.
+    """
+    repo_root = settings.base_dir.parent
+    dirs = [
+        settings.storage_dir / 'models' / 'yolo',
+        settings.base_dir / 'models' / 'yolo',
+        repo_root / 'models' / 'yolo',
+    ]
+    unique_dirs: list[Path] = []
+    for directory in dirs:
+        if directory not in unique_dirs:
+            unique_dirs.append(directory)
+    return unique_dirs
+
+
 def yolo_model_dir() -> Path:
-    return settings.storage_dir / 'models' / 'yolo'
+    return yolo_model_dirs()[0]
+
+
+def _iter_yolo_model_candidates() -> list[Path]:
+    candidates: list[Path] = []
+    for model_dir in yolo_model_dirs():
+        for pattern in ('best.pt', '*.pt', '*.onnx', '*.engine'):
+            candidates.extend(model_dir.glob(pattern))
+    return sorted(set(candidates), key=lambda path: (path.name != 'best.pt', str(path)))
+
+
+def has_yolo_model() -> bool:
+    env_path = os.getenv('YOLO_MODEL_PATH')
+    if env_path:
+        return Path(env_path).expanduser().exists()
+    return bool(_iter_yolo_model_candidates())
 
 
 def find_yolo_model_path() -> Path:
@@ -178,13 +213,11 @@ def find_yolo_model_path() -> Path:
             raise FileNotFoundError(f'YOLO_MODEL_PATH points to a missing model file: {path}')
         return path
 
-    model_dir = yolo_model_dir()
-    candidates = []
-    for pattern in ('*.pt', '*.onnx', '*.engine'):
-        candidates.extend(model_dir.glob(pattern))
+    candidates = _iter_yolo_model_candidates()
     if not candidates:
-        raise FileNotFoundError(f'YOLO model file is missing. Put a YOLO11 model under {model_dir} or set YOLO_MODEL_PATH.')
-    return sorted(candidates)[0]
+        searched = ', '.join(str(path) for path in yolo_model_dirs())
+        raise FileNotFoundError(f'YOLO model file is missing. Put best.pt or another YOLO model under one of: {searched}; or set YOLO_MODEL_PATH.')
+    return candidates[0]
 
 
 def _normalize_yolo_label(label: str) -> str:
@@ -274,10 +307,19 @@ def detect_segments_with_opencv(image_path: Path) -> list[SegmentItem]:
 def detect_segments(image_path: Path, mode: str = 'balanced') -> list[SegmentItem]:
     if mode == 'fast':
         return []
-    engine = os.getenv('SEGMENT_ENGINE', 'opencv').lower()
+    engine = os.getenv('SEGMENT_ENGINE', 'auto').lower()
     try:
         if engine in ('yolo', 'yolo11', 'yolo26'):
             return detect_segments_with_yolo(image_path)[:30]
+        if engine == 'opencv':
+            return detect_segments_with_opencv(image_path)
+        if engine == 'auto' and has_yolo_model():
+            try:
+                yolo_items = detect_segments_with_yolo(image_path)
+                if yolo_items:
+                    return yolo_items[:30]
+            except Exception:
+                pass
         return detect_segments_with_opencv(image_path)
     except Exception:
         return []

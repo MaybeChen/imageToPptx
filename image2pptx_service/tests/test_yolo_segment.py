@@ -116,3 +116,54 @@ def test_merge_segments_by_layer_keeps_foreground_inside_background():
     merged = merge_segments_by_layer(items)
 
     assert [item.type for item in merged] == ["background", "shape", "icon"]
+
+
+def test_find_yolo_model_path_prefers_best_pt_in_supported_dirs(monkeypatch, tmp_path):
+    from app.pipeline import segment
+
+    first_dir = tmp_path / "storage" / "models" / "yolo"
+    second_dir = tmp_path / "models" / "yolo"
+    first_dir.mkdir(parents=True)
+    second_dir.mkdir(parents=True)
+    generic = first_dir / "zzz.pt"
+    best = second_dir / "best.pt"
+    generic.write_text("fake")
+    best.write_text("fake")
+    monkeypatch.delenv("YOLO_MODEL_PATH", raising=False)
+    monkeypatch.setattr(segment, "yolo_model_dirs", lambda: [first_dir, second_dir])
+
+    assert find_yolo_model_path() == best
+
+
+def test_detect_segments_auto_uses_yolo_when_model_exists(monkeypatch, tmp_path):
+    from app.pipeline import segment
+    from app.schemas import SegmentItem
+
+    image = tmp_path / "image.png"
+    image.write_text("fake")
+    monkeypatch.delenv("SEGMENT_ENGINE", raising=False)
+    monkeypatch.setattr(segment, "has_yolo_model", lambda: True)
+    monkeypatch.setattr(segment, "detect_segments_with_yolo", lambda path: [
+        SegmentItem(type="chart", bbox_px=[10, 20, 30, 40], confidence=0.95)
+    ])
+    monkeypatch.setattr(segment, "detect_segments_with_opencv", lambda path: [
+        SegmentItem(type="image", bbox_px=[1, 2, 3, 4], confidence=0.35)
+    ])
+
+    assert segment.detect_segments(image)[0].type == "chart"
+
+
+def test_detect_segments_auto_falls_back_to_opencv_when_yolo_fails(monkeypatch, tmp_path):
+    from app.pipeline import segment
+    from app.schemas import SegmentItem
+
+    image = tmp_path / "image.png"
+    image.write_text("fake")
+    monkeypatch.delenv("SEGMENT_ENGINE", raising=False)
+    monkeypatch.setattr(segment, "has_yolo_model", lambda: True)
+    monkeypatch.setattr(segment, "detect_segments_with_yolo", lambda path: (_ for _ in ()).throw(RuntimeError("boom")))
+    monkeypatch.setattr(segment, "detect_segments_with_opencv", lambda path: [
+        SegmentItem(type="image", bbox_px=[1, 2, 3, 4], confidence=0.35)
+    ])
+
+    assert segment.detect_segments(image)[0].type == "image"
