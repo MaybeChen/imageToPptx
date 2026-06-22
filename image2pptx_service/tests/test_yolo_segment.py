@@ -33,19 +33,72 @@ class _FakeResult:
     def __init__(self):
         self.boxes = [
             _FakeBox(0, 0.91, [10, 20, 40, 60]),
-            _FakeBox(1, 0.83, [100, 110, 200, 210]),
-            _FakeBox(2, 0.72, [20, 200, 160, 206]),
+            _FakeBox(5, 0.83, [100, 110, 200, 210]),
+            _FakeBox(10, 0.72, [20, 200, 160, 206]),
         ]
 
 
 class _FakeYOLO:
     names = _FakeResult.names
+    last_predict_kwargs = None
 
     def __init__(self, model_path):
         self.model_path = model_path
 
     def predict(self, *args, **kwargs):
+        type(self).last_predict_kwargs = kwargs
         return [_FakeResult()]
+
+
+class _FakeSahiBBox:
+    def __init__(self, xyxy):
+        self.minx, self.miny, self.maxx, self.maxy = xyxy
+
+
+class _FakeSahiCategory:
+    def __init__(self, class_id, name):
+        self.id = class_id
+        self.name = name
+
+
+class _FakeSahiScore:
+    def __init__(self, value):
+        self.value = value
+
+
+class _FakeSahiPrediction:
+    def __init__(self, class_id, name, confidence, xyxy):
+        self.category = _FakeSahiCategory(class_id, name)
+        self.score = _FakeSahiScore(confidence)
+        self.bbox = _FakeSahiBBox(xyxy)
+
+
+class _FakeSahiResult:
+    object_prediction_list = [
+        _FakeSahiPrediction(0, "logo", 0.91, [10, 20, 40, 60]),
+        _FakeSahiPrediction(5, "rectangle", 0.83, [100, 110, 200, 210]),
+        _FakeSahiPrediction(10, "connector", 0.72, [20, 200, 160, 206]),
+    ]
+
+
+class _FakeAutoDetectionModel:
+    last_kwargs = None
+
+    @classmethod
+    def from_pretrained(cls, **kwargs):
+        cls.last_kwargs = kwargs
+        return cls()
+
+
+def _install_fake_sahi(monkeypatch):
+    def fake_get_sliced_prediction(*args, **kwargs):
+        _install_fake_sahi.last_args = args
+        _install_fake_sahi.last_kwargs = kwargs
+        return _FakeSahiResult()
+
+    monkeypatch.setitem(sys.modules, "sahi", types.SimpleNamespace(AutoDetectionModel=_FakeAutoDetectionModel))
+    monkeypatch.setitem(sys.modules, "sahi.predict", types.SimpleNamespace(get_sliced_prediction=fake_get_sliced_prediction))
+    return fake_get_sliced_prediction
 
 
 def test_find_yolo_model_path_uses_env(monkeypatch, tmp_path):
@@ -64,6 +117,21 @@ def test_find_yolo_model_path_rejects_missing_env(monkeypatch, tmp_path):
 
 
 def test_label_to_segment_type_maps_common_aliases():
+    assert _label_to_segment_type("0") == "icon"
+    assert _label_to_segment_type("1") == "icon"
+    assert _label_to_segment_type("2") == "image"
+    assert _label_to_segment_type("3") == "chart"
+    assert _label_to_segment_type("4") == "table"
+    assert _label_to_segment_type("5") == "shape"
+    assert _label_to_segment_type("6") == "shape"
+    assert _label_to_segment_type("7") == "shape"
+    assert _label_to_segment_type("8") == "shape"
+    assert _label_to_segment_type("9") == "shape"
+    assert _label_to_segment_type("10") == "line"
+    assert _label_to_segment_type("11") == "arrow"
+    assert _label_to_segment_type("12") == "background"
+    assert _label_to_segment_type("13") == "background"
+    assert _label_to_segment_type("14") == "background"
     assert _label_to_segment_type("logo") == "icon"
     assert _label_to_segment_type("picture") == "image"
     assert _label_to_segment_type("connector") == "line"
@@ -76,14 +144,48 @@ def test_detect_segments_with_yolo_maps_boxes_to_segment_items(monkeypatch, tmp_
     image = tmp_path / "image.png"
     image.write_text("fake")
     monkeypatch.setenv("YOLO_MODEL_PATH", str(model))
-    fake_module = types.SimpleNamespace(YOLO=_FakeYOLO)
-    monkeypatch.setitem(sys.modules, "ultralytics", fake_module)
+    _install_fake_sahi(monkeypatch)
+
+    monkeypatch.delenv("YOLO_CONF", raising=False)
 
     segments = detect_segments_with_yolo(image)
 
+    assert _FakeAutoDetectionModel.last_kwargs["confidence_threshold"] == 0.01
+    assert _install_fake_sahi.last_kwargs["slice_height"] == 512
+    assert _install_fake_sahi.last_kwargs["slice_width"] == 512
     assert [segment.type for segment in segments] == ["shape", "icon", "line"]
     assert segments[0].shape == "rect"
     assert segments[1].bbox_px == [10.0, 20.0, 30.0, 40.0]
+
+
+def test_detect_segments_with_yolo_debug_overlay_uses_raw_detections(monkeypatch, tmp_path):
+    from app.pipeline import segment as segment_module
+
+    model = tmp_path / "model.pt"
+    model.write_text("fake")
+    image = tmp_path / "image.png"
+    image.write_text("fake")
+    debug_image = tmp_path / "debug.png"
+    monkeypatch.setenv("YOLO_MODEL_PATH", str(model))
+    _install_fake_sahi(monkeypatch)
+    captured = {}
+
+    def fake_overlay(image_path, detections, output_path, title="YOLO raw"):
+        captured["image_path"] = image_path
+        captured["detections"] = detections
+        captured["output_path"] = output_path
+        captured["title"] = title
+        return output_path
+
+    monkeypatch.setattr(segment_module, "write_yolo_detection_debug_overlay", fake_overlay)
+
+    detect_segments_with_yolo(image, debug_image_path=debug_image)
+
+    assert captured["image_path"] == image
+    assert captured["output_path"] == debug_image
+    assert captured["title"] == "YOLO raw"
+    assert [detection["class_id"] for detection in captured["detections"]] == [0, 5, 10]
+    assert captured["detections"][0]["xyxy"] == [10, 20, 40, 60]
 
 
 def test_detect_segments_accepts_yolo26_engine(monkeypatch, tmp_path):
@@ -103,6 +205,7 @@ def test_label_to_segment_type_ignores_text_region_and_maps_table():
     assert _label_to_segment_type("text_region") is None
     assert _label_to_segment_type("text") is None
     assert _label_to_segment_type("table") == "table"
+    assert _label_to_segment_type("4") == "table"
 
 
 def test_merge_segments_by_layer_keeps_foreground_inside_background():
@@ -185,13 +288,28 @@ def test_format_yolo_exception_explains_windows_torch_dll_error(monkeypatch):
         '[WinError 127] 找不到指定的程序。 Error loading "D:\\venv\\Lib\\site-packages\\torch\\lib\\shm.dll" or one of its dependencies.'
     )
 
+    monkeypatch.setattr(
+        segment,
+        "_diagnose_windows_torch_dll_error",
+        lambda error: "Missing direct DLL dependencies for shm.dll: c10.dll",
+    )
+
     message = _format_yolo_exception(exc)
 
     assert "Windows PyTorch DLL dependency load failed" in message
+    assert "Diagnostic: Missing direct DLL dependencies for shm.dll: c10.dll" in message
     assert "dependent DLLs is missing or ABI-incompatible" in message
     assert "Microsoft Visual C++ Redistributable 2015-2022" in message
     assert "set YOLO_PYTHON to that python.exe" in message
     assert "poetry run python -m pip install --force-reinstall torch torchvision" in message
+
+
+def test_diagnose_windows_torch_dll_error_reports_missing_target():
+    from app.pipeline import segment
+
+    exc = OSError('Error loading "D:\\venv\\Lib\\site-packages\\torch\\lib\\shm.dll" or one of its dependencies.')
+
+    assert "Loader target does not exist" in segment._diagnose_windows_torch_dll_error(exc)
 
 
 def test_detect_segments_with_yolo_uses_external_python_when_configured(monkeypatch, tmp_path, capsys):
@@ -221,3 +339,21 @@ def test_detect_segments_with_yolo_uses_external_python_when_configured(monkeypa
     output = capsys.readouterr().out
     assert "YOLO subprocess start: python=C:/working-yolo/python.exe" in output
     assert "YOLO subprocess done: raw_items=1 merged_items=1" in output
+
+
+def test_write_yolo_detection_debug_overlay_creates_annotated_image(tmp_path):
+    from PIL import Image
+    from app.pipeline.segment import write_yolo_detection_debug_overlay
+    from app.schemas import SegmentItem
+
+    source = tmp_path / "source.png"
+    output = tmp_path / "yolo_detections.png"
+    Image.new("RGB", (120, 80), "white").save(source)
+
+    write_yolo_detection_debug_overlay(
+        source,
+        [{'class_id': 3, 'label': 'chart', 'xyxy': [10, 10, 60, 40], 'confidence': 0.87}],
+        output,
+    )
+
+    assert output.exists()

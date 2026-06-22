@@ -24,9 +24,9 @@ async def convert(file: UploadFile = File(...), mode: str = Form('balanced'), pp
     finally:
         tmp_path.unlink(missing_ok=True)
     jid=artifacts.job_id
-    return ConvertResponse(job_id=jid,status='completed',pptx_url=f'/download/{jid}/pptx',manifest_url=f'/download/{jid}/manifest',quality_report_url=f'/download/{jid}/quality',preview_url=f'/download/{jid}/preview')
+    return ConvertResponse(job_id=jid,status='completed',pptx_url=f'/download/{jid}/pptx',manifest_url=f'/download/{jid}/manifest',quality_report_url=f'/download/{jid}/quality',preview_url=f'/download/{jid}/preview',yolo_debug_url=f'/download/{jid}/yolo_debug')
 
-DOWNLOADS={'pptx':('result.pptx','application/vnd.openxmlformats-officedocument.presentationml.presentation'),'manifest':('slide_manifest.json','application/json'),'quality':('quality_report.json','application/json'),'preview':('preview.png','image/png')}
+DOWNLOADS={'pptx':('result.pptx','application/vnd.openxmlformats-officedocument.presentationml.presentation'),'manifest':('slide_manifest.json','application/json'),'quality':('quality_report.json','application/json'),'preview':('preview.png','image/png'),'yolo_debug':('yolo_detections.png','image/png')}
 @app.get('/download/{job_id}/{kind}')
 def download(job_id: str, kind: str):
     if kind not in DOWNLOADS: raise HTTPException(404, 'unknown artifact')

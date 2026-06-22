@@ -96,7 +96,7 @@ def filter_ocr_items_for_manifest(ocr_items, segments, width_px, height_px):
     kept = []
     removed = 0
     filter_short_glyphs = _env_flag('OCR_FILTER_SHORT_GLYPHS', True)
-    filter_visual_assets = _env_flag('OCR_FILTER_VISUAL_ASSET_TEXT', True)
+    filter_visual_assets = _env_flag('OCR_FILTER_VISUAL_ASSET_TEXT', False)
     for item in ocr_items:
         overlaps_icon = filter_visual_assets and bool(icon_segments) and _ocr_item_overlaps_icon(item, icon_segments)
         overlaps_visual_asset = filter_visual_assets and _ocr_item_overlaps_suppression_zone(item, suppression_segments)
@@ -115,18 +115,22 @@ def build_manifest(job, ocr_items, segments, mode='balanced', ppt_width=13.333, 
     if filtered_icon_ocr_count:
         warnings.append(f'Filtered {filtered_icon_ocr_count} OCR text candidate(s) that looked like icon glyphs or overlapped icon/chart/table/image visual asset regions.')
 
-    background_rel = 'assets/background.png'
-    copyfile(job['source_path'], job['job_root'] / background_rel)
-    elements.append(ManifestElement(
-        id='background_001',
-        type='background',
-        asset_path=background_rel,
-        bbox_px=[0, 0, job['width_px'], job['height_px']],
-        editable=False,
-        confidence=1.0,
-        editable_note='Full-slide source image inserted as visual fallback background.',
-    ))
-    warnings.append('Full-slide source image is used as a visual fallback background; editability is provided by overlaid native elements where detected.')
+    use_full_slide_background = _env_flag('USE_FULL_SLIDE_BACKGROUND', False)
+    background_strategy = 'none'
+    if use_full_slide_background:
+        background_rel = 'assets/background.png'
+        copyfile(job['source_path'], job['job_root'] / background_rel)
+        elements.append(ManifestElement(
+            id='background_001',
+            type='background',
+            asset_path=background_rel,
+            bbox_px=[0, 0, job['width_px'], job['height_px']],
+            editable=False,
+            confidence=1.0,
+            editable_note='Full-slide source image inserted as optional visual fallback background.',
+        ))
+        background_strategy = 'image_fallback'
+        warnings.append('Full-slide source image is used as an optional visual fallback background; set USE_FULL_SLIDE_BACKGROUND=0 to disable it.')
 
     for idx, seg in enumerate(segments, 1):
         if seg.type == 'shape':
@@ -146,7 +150,7 @@ def build_manifest(job, ocr_items, segments, mode='balanced', ppt_width=13.333, 
     quality=ManifestQuality(ocr_text_count=len(ocr_items), native_text_count=sum(e.type=='text' for e in elements), shape_count=sum(e.type=='shape' for e in elements), image_asset_count=sum(e.type in ('image','icon','chart','table') for e in elements), background_asset_count=sum(e.type=='background' for e in elements), ocr_engine=ocr_engine, warnings=warnings)
     editable_native = quality.native_text_count + quality.shape_count + sum(e.type in ('line','arrow') for e in elements)
     edit='medium' if editable_native else 'low'
-    manifest=SlideManifest(source=SourceInfo(file_name=job['file_name'], width_px=job['width_px'], height_px=job['height_px']), slide=SlideInfo(width_in=ppt_width, height_in=ppt_height), strategy=StrategyInfo(mode=mode, background='image_fallback', editability_level=edit), elements=elements, quality=quality)
+    manifest=SlideManifest(source=SourceInfo(file_name=job['file_name'], width_px=job['width_px'], height_px=job['height_px']), slide=SlideInfo(width_in=ppt_width, height_in=ppt_height), strategy=StrategyInfo(mode=mode, background=background_strategy, editability_level=edit), elements=elements, quality=quality)
     out=job['dirs']['output']/ 'slide_manifest.json'
     write_json(out, manifest.model_dump(exclude_none=True))
     return manifest, out
