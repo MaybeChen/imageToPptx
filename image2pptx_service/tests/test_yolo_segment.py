@@ -1,3 +1,4 @@
+from pathlib import Path
 import sys
 import types
 
@@ -6,6 +7,7 @@ import pytest
 from app.pipeline.segment import (
     detect_segments_with_yolo,
     find_yolo_model_path,
+    _format_yolo_exception,
     _label_to_segment_type,
 )
 
@@ -116,3 +118,106 @@ def test_merge_segments_by_layer_keeps_foreground_inside_background():
     merged = merge_segments_by_layer(items)
 
     assert [item.type for item in merged] == ["background", "shape", "icon"]
+
+
+def test_find_yolo_model_path_prefers_best_pt_in_supported_dirs(monkeypatch, tmp_path):
+    from app.pipeline import segment
+
+    first_dir = tmp_path / "storage" / "models" / "yolo"
+    second_dir = tmp_path / "models" / "yolo"
+    first_dir.mkdir(parents=True)
+    second_dir.mkdir(parents=True)
+    generic = first_dir / "zzz.pt"
+    best = second_dir / "best.pt"
+    generic.write_text("fake")
+    best.write_text("fake")
+    monkeypatch.delenv("YOLO_MODEL_PATH", raising=False)
+    monkeypatch.setattr(segment, "yolo_model_dirs", lambda: [first_dir, second_dir])
+
+    assert find_yolo_model_path() == best
+
+
+def test_detect_segments_auto_uses_yolo_when_model_exists(monkeypatch, tmp_path, capsys):
+    from app.pipeline import segment
+    from app.schemas import SegmentItem
+
+    image = tmp_path / "image.png"
+    image.write_text("fake")
+    monkeypatch.delenv("SEGMENT_ENGINE", raising=False)
+    monkeypatch.setattr(segment, "has_yolo_model", lambda: True)
+    monkeypatch.setattr(segment, "detect_segments_with_yolo", lambda path: [
+        SegmentItem(type="chart", bbox_px=[10, 20, 30, 40], confidence=0.95)
+    ])
+    monkeypatch.setattr(segment, "detect_segments_with_opencv", lambda path: [
+        SegmentItem(type="image", bbox_px=[1, 2, 3, 4], confidence=0.35)
+    ])
+
+    assert segment.detect_segments(image)[0].type == "chart"
+    output = capsys.readouterr().out
+    assert "Segmentation selected: auto detected YOLO model" in output
+    assert "Segmentation result: using YOLO items=1" in output
+
+
+def test_detect_segments_auto_falls_back_to_opencv_when_yolo_fails(monkeypatch, tmp_path, capsys):
+    from app.pipeline import segment
+    from app.schemas import SegmentItem
+
+    image = tmp_path / "image.png"
+    image.write_text("fake")
+    monkeypatch.delenv("SEGMENT_ENGINE", raising=False)
+    monkeypatch.setattr(segment, "has_yolo_model", lambda: True)
+    monkeypatch.setattr(segment, "detect_segments_with_yolo", lambda path: (_ for _ in ()).throw(RuntimeError("boom")))
+    monkeypatch.setattr(segment, "detect_segments_with_opencv", lambda path: [
+        SegmentItem(type="image", bbox_px=[1, 2, 3, 4], confidence=0.35)
+    ])
+
+    assert segment.detect_segments(image)[0].type == "image"
+    output = capsys.readouterr().out
+    assert "Segmentation fallback: YOLO failed with RuntimeError: boom; using OpenCV" in output
+    assert "Segmentation result: using OpenCV items=1" in output
+
+
+def test_format_yolo_exception_explains_windows_torch_dll_error(monkeypatch):
+    from app.pipeline import segment
+
+    monkeypatch.setattr(segment.os, "name", "nt")
+    exc = OSError(
+        '[WinError 127] 找不到指定的程序。 Error loading "D:\\venv\\Lib\\site-packages\\torch\\lib\\shm.dll" or one of its dependencies.'
+    )
+
+    message = _format_yolo_exception(exc)
+
+    assert "Windows PyTorch DLL dependency load failed" in message
+    assert "dependent DLLs is missing or ABI-incompatible" in message
+    assert "Microsoft Visual C++ Redistributable 2015-2022" in message
+    assert "set YOLO_PYTHON to that python.exe" in message
+    assert "poetry run python -m pip install --force-reinstall torch torchvision" in message
+
+
+def test_detect_segments_with_yolo_uses_external_python_when_configured(monkeypatch, tmp_path, capsys):
+    import json
+    import subprocess
+
+    model = tmp_path / "best.pt"
+    image = tmp_path / "image.png"
+    model.write_text("fake")
+    image.write_text("fake")
+    monkeypatch.setenv("YOLO_MODEL_PATH", str(model))
+    monkeypatch.setenv("YOLO_PYTHON", "C:/working-yolo/python.exe")
+
+    def fake_run(args, **kwargs):
+        output_path = args[5]
+        Path(output_path).write_text(json.dumps([
+            {"label": "logo", "confidence": 0.9, "xyxy": [1, 2, 11, 22]}
+        ]), encoding="utf-8")
+        return subprocess.CompletedProcess(args, 0, stdout="", stderr="")
+
+    monkeypatch.setattr("app.pipeline.segment.subprocess.run", fake_run)
+
+    segments = detect_segments_with_yolo(image)
+
+    assert segments[0].type == "icon"
+    assert segments[0].bbox_px == [1.0, 2.0, 10.0, 20.0]
+    output = capsys.readouterr().out
+    assert "YOLO subprocess start: python=C:/working-yolo/python.exe" in output
+    assert "YOLO subprocess done: raw_items=1 merged_items=1" in output
