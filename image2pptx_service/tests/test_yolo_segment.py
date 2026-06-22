@@ -33,18 +33,20 @@ class _FakeResult:
     def __init__(self):
         self.boxes = [
             _FakeBox(0, 0.91, [10, 20, 40, 60]),
-            _FakeBox(1, 0.83, [100, 110, 200, 210]),
-            _FakeBox(2, 0.72, [20, 200, 160, 206]),
+            _FakeBox(5, 0.83, [100, 110, 200, 210]),
+            _FakeBox(10, 0.72, [20, 200, 160, 206]),
         ]
 
 
 class _FakeYOLO:
     names = _FakeResult.names
+    last_predict_kwargs = None
 
     def __init__(self, model_path):
         self.model_path = model_path
 
     def predict(self, *args, **kwargs):
+        type(self).last_predict_kwargs = kwargs
         return [_FakeResult()]
 
 
@@ -64,6 +66,21 @@ def test_find_yolo_model_path_rejects_missing_env(monkeypatch, tmp_path):
 
 
 def test_label_to_segment_type_maps_common_aliases():
+    assert _label_to_segment_type("0") == "icon"
+    assert _label_to_segment_type("1") == "icon"
+    assert _label_to_segment_type("2") == "image"
+    assert _label_to_segment_type("3") == "chart"
+    assert _label_to_segment_type("4") == "table"
+    assert _label_to_segment_type("5") == "shape"
+    assert _label_to_segment_type("6") == "shape"
+    assert _label_to_segment_type("7") == "shape"
+    assert _label_to_segment_type("8") == "shape"
+    assert _label_to_segment_type("9") == "shape"
+    assert _label_to_segment_type("10") == "line"
+    assert _label_to_segment_type("11") == "arrow"
+    assert _label_to_segment_type("12") == "background"
+    assert _label_to_segment_type("13") == "background"
+    assert _label_to_segment_type("14") == "background"
     assert _label_to_segment_type("logo") == "icon"
     assert _label_to_segment_type("picture") == "image"
     assert _label_to_segment_type("connector") == "line"
@@ -79,8 +96,11 @@ def test_detect_segments_with_yolo_maps_boxes_to_segment_items(monkeypatch, tmp_
     fake_module = types.SimpleNamespace(YOLO=_FakeYOLO)
     monkeypatch.setitem(sys.modules, "ultralytics", fake_module)
 
+    monkeypatch.delenv("YOLO_CONF", raising=False)
+
     segments = detect_segments_with_yolo(image)
 
+    assert _FakeYOLO.last_predict_kwargs["conf"] == 0.01
     assert [segment.type for segment in segments] == ["shape", "icon", "line"]
     assert segments[0].shape == "rect"
     assert segments[1].bbox_px == [10.0, 20.0, 30.0, 40.0]
@@ -103,6 +123,7 @@ def test_label_to_segment_type_ignores_text_region_and_maps_table():
     assert _label_to_segment_type("text_region") is None
     assert _label_to_segment_type("text") is None
     assert _label_to_segment_type("table") == "table"
+    assert _label_to_segment_type("4") == "table"
 
 
 def test_merge_segments_by_layer_keeps_foreground_inside_background():

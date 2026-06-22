@@ -163,6 +163,25 @@ SEGMENT_LAYER_PRIORITY = {
     'arrow': 3,
 }
 
+
+YOLO_CLASS_ID_LABELS = {
+    '0': 'icon',
+    '1': 'logo',
+    '2': 'image',
+    '3': 'chart',
+    '4': 'table',
+    '5': 'rectangle',
+    '6': 'rounded_rectangle',
+    '7': 'circle',
+    '8': 'ellipse',
+    '9': 'diamond',
+    '10': 'line',
+    '11': 'arrow',
+    '12': 'background',
+    '13': 'panel',
+    '14': 'container',
+}
+
 YOLO_LABEL_TYPE_MAP = {
     'icon': 'icon',
     'logo': 'icon',
@@ -374,6 +393,7 @@ def _normalize_yolo_label(label: str) -> str:
 
 def _label_to_segment_type(label: str) -> str | None:
     normalized = _normalize_yolo_label(label)
+    normalized = YOLO_CLASS_ID_LABELS.get(normalized, normalized)
     if normalized in YOLO_IGNORED_LABELS or normalized.replace('_', ' ') in YOLO_IGNORED_LABELS:
         return None
     return YOLO_LABEL_TYPE_MAP.get(normalized, YOLO_LABEL_TYPE_MAP.get(normalized.replace('_', ' '), 'image'))
@@ -381,6 +401,7 @@ def _label_to_segment_type(label: str) -> str | None:
 
 def _label_to_shape(label: str) -> str | None:
     normalized = _normalize_yolo_label(label)
+    normalized = YOLO_CLASS_ID_LABELS.get(normalized, normalized)
     return YOLO_SHAPE_LABELS.get(normalized) or YOLO_SHAPE_LABELS.get(normalized.replace('_', ' '))
 
 
@@ -398,10 +419,19 @@ def _value_to_float(value, default: float = 0.0) -> float:
         return default
 
 
+def _detection_label(detection: dict) -> str:
+    class_id = detection.get('class_id')
+    if class_id is not None:
+        mapped = YOLO_CLASS_ID_LABELS.get(str(class_id))
+        if mapped:
+            return mapped
+    return str(detection.get('label', ''))
+
+
 def _detections_to_segments(detections: list[dict]) -> list[SegmentItem]:
     items: list[SegmentItem] = []
     for detection in detections:
-        label = str(detection.get('label', ''))
+        label = _detection_label(detection)
         seg_type = _label_to_segment_type(label)
         if seg_type is None:
             continue
@@ -455,6 +485,7 @@ for result in results or []:
         raw_xyxy = getattr(box, 'xyxy')
         xyxy = raw_xyxy[0] if hasattr(raw_xyxy, '__getitem__') else raw_xyxy
         detections.append({
+            'class_id': cls_id,
             'label': label,
             'confidence': value_to_float(getattr(box, 'conf', 0.0)),
             'xyxy': xyxy_to_list(xyxy),
@@ -503,7 +534,7 @@ def detect_segments_with_yolo_subprocess(image_path: Path, model_path: Path, deb
     yolo_python = os.getenv('YOLO_PYTHON')
     if not yolo_python:
         raise RuntimeError('YOLO_PYTHON is not set')
-    conf = _env_float('YOLO_CONF', 0.25)
+    conf = _env_float('YOLO_CONF', 0.01)
     iou = _env_float('YOLO_IOU', 0.7)
     imgsz = _env_int('YOLO_IMGSZ', 1024)
     max_det = _env_int('YOLO_MAX_DET', 80)
@@ -553,7 +584,7 @@ def detect_segments_with_yolo(image_path: Path, debug_image_path: Path | None = 
 
     _segment_log(f'YOLO enabled: loading model={model_path} image={image_path}')
     model = YOLO(str(model_path))
-    conf = _env_float('YOLO_CONF', 0.25)
+    conf = _env_float('YOLO_CONF', 0.01)
     iou = _env_float('YOLO_IOU', 0.7)
     imgsz = _env_int('YOLO_IMGSZ', 1024)
     max_det = _env_int('YOLO_MAX_DET', 80)
@@ -570,7 +601,12 @@ def detect_segments_with_yolo(image_path: Path, debug_image_path: Path | None = 
             cls_id = int(_value_to_float(getattr(box, 'cls', 0)))
             label = str(result_names.get(cls_id, cls_id)) if isinstance(result_names, dict) else str(cls_id)
             xyxy = getattr(box, 'xyxy')[0] if hasattr(getattr(box, 'xyxy'), '__getitem__') else getattr(box, 'xyxy')
-            detections.append({'label': label, 'confidence': _value_to_float(getattr(box, 'conf', 0.0)), 'xyxy': xyxy})
+            detections.append({
+                'class_id': cls_id,
+                'label': label,
+                'confidence': _value_to_float(getattr(box, 'conf', 0.0)),
+                'xyxy': xyxy,
+            })
     merged = _detections_to_segments(detections)
     _segment_log(f'YOLO predict done: raw_items={len(detections)} merged_items={len(merged)}')
     if debug_image_path:
