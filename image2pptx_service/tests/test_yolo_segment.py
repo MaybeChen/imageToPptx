@@ -135,7 +135,7 @@ def test_find_yolo_model_path_prefers_best_pt_in_supported_dirs(monkeypatch, tmp
     assert find_yolo_model_path() == best
 
 
-def test_detect_segments_auto_uses_yolo_when_model_exists(monkeypatch, tmp_path):
+def test_detect_segments_auto_uses_yolo_when_model_exists(monkeypatch, tmp_path, capsys):
     from app.pipeline import segment
     from app.schemas import SegmentItem
 
@@ -151,9 +151,12 @@ def test_detect_segments_auto_uses_yolo_when_model_exists(monkeypatch, tmp_path)
     ])
 
     assert segment.detect_segments(image)[0].type == "chart"
+    output = capsys.readouterr().out
+    assert "Segmentation selected: auto detected YOLO model" in output
+    assert "Segmentation result: using YOLO items=1" in output
 
 
-def test_detect_segments_auto_falls_back_to_opencv_when_yolo_fails(monkeypatch, tmp_path):
+def test_detect_segments_auto_falls_back_to_opencv_when_yolo_fails(monkeypatch, tmp_path, capsys):
     from app.pipeline import segment
     from app.schemas import SegmentItem
 
@@ -167,3 +170,6 @@ def test_detect_segments_auto_falls_back_to_opencv_when_yolo_fails(monkeypatch, 
     ])
 
     assert segment.detect_segments(image)[0].type == "image"
+    output = capsys.readouterr().out
+    assert "Segmentation fallback: YOLO failed with RuntimeError: boom; using OpenCV" in output
+    assert "Segmentation result: using OpenCV items=1" in output
