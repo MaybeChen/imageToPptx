@@ -29,7 +29,7 @@ def _format_yolo_exception(exc: Exception) -> str:
     )
     if is_windows_torch_dll_error:
         return (
-            f'{detail}. Windows PyTorch DLL dependency load failed; YOLO was selected but cannot start. '
+            f'{detail}. Windows PyTorch DLL dependency load failed; YOLO was selected but cannot start. The named DLL file can exist while one of its dependent DLLs is missing or ABI-incompatible. '
             'Install/repair Microsoft Visual C++ Redistributable 2015-2022. If you already have another Python environment where YOLO works, '
             'set YOLO_PYTHON to that python.exe; otherwise reinstall a CPU PyTorch wheel inside this Poetry environment: '
             'poetry run python -m pip install --force-reinstall torch torchvision --index-url https://download.pytorch.org/whl/cpu'

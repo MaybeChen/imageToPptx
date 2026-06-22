@@ -188,6 +188,7 @@ def test_format_yolo_exception_explains_windows_torch_dll_error(monkeypatch):
     message = _format_yolo_exception(exc)
 
     assert "Windows PyTorch DLL dependency load failed" in message
+    assert "dependent DLLs is missing or ABI-incompatible" in message
     assert "Microsoft Visual C++ Redistributable 2015-2022" in message
     assert "set YOLO_PYTHON to that python.exe" in message
     assert "poetry run python -m pip install --force-reinstall torch torchvision" in message
