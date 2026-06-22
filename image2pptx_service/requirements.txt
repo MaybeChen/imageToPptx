@@ -8,3 +8,4 @@ numpy
 python-pptx
 pytesseract
 pytest
+ultralytics>=8.4.66,<9.0.0
