@@ -15,5 +15,5 @@ def test_pipeline_smoke(tmp_path, monkeypatch):
     assert (out/'slide_manifest.json').exists()
     assert (out/'quality_report.json').exists()
     manifest = json.loads((out/'slide_manifest.json').read_text(encoding='utf-8'))
-    assert manifest['elements'][0]['type'] == 'background'
-    assert manifest['quality']['background_asset_count'] == 1
+    assert manifest['strategy']['background'] == 'none'
+    assert manifest['quality']['background_asset_count'] == 0

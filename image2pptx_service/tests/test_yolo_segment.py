@@ -236,3 +236,21 @@ def test_detect_segments_with_yolo_uses_external_python_when_configured(monkeypa
     output = capsys.readouterr().out
     assert "YOLO subprocess start: python=C:/working-yolo/python.exe" in output
     assert "YOLO subprocess done: raw_items=1 merged_items=1" in output
+
+
+def test_write_segment_debug_overlay_creates_annotated_image(tmp_path):
+    from PIL import Image
+    from app.pipeline.segment import write_segment_debug_overlay
+    from app.schemas import SegmentItem
+
+    source = tmp_path / "source.png"
+    output = tmp_path / "yolo_detections.png"
+    Image.new("RGB", (120, 80), "white").save(source)
+
+    write_segment_debug_overlay(
+        source,
+        [SegmentItem(type="chart", bbox_px=[10, 10, 50, 30], confidence=0.87)],
+        output,
+    )
+
+    assert output.exists()

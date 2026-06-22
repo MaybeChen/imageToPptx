@@ -464,7 +464,42 @@ with open(output_path, 'w', encoding='utf-8') as f:
 """
 
 
-def detect_segments_with_yolo_subprocess(image_path: Path, model_path: Path) -> list[SegmentItem]:
+
+def write_segment_debug_overlay(image_path: Path, segments: list[SegmentItem], output_path: Path, title: str = 'YOLO') -> Path:
+    from PIL import Image, ImageDraw, ImageFont
+
+    output_path.parent.mkdir(parents=True, exist_ok=True)
+    colors = {
+        'background': '#9CA3AF',
+        'shape': '#2563EB',
+        'image': '#F97316',
+        'icon': '#A855F7',
+        'chart': '#EF4444',
+        'table': '#14B8A6',
+        'line': '#22C55E',
+        'arrow': '#84CC16',
+    }
+    with Image.open(image_path).convert('RGB') as image:
+        draw = ImageDraw.Draw(image)
+        font = ImageFont.load_default()
+        for index, segment in enumerate(segments, 1):
+            x, y, w, h = [float(value) for value in segment.bbox_px]
+            x2, y2 = x + w, y + h
+            color = colors.get(segment.type, '#F59E0B')
+            draw.rectangle((x, y, x2, y2), outline=color, width=3)
+            label = f'{index}:{segment.type} {segment.confidence:.2f}'
+            text_bbox = draw.textbbox((x, y), label, font=font)
+            label_h = text_bbox[3] - text_bbox[1]
+            label_w = text_bbox[2] - text_bbox[0]
+            label_y = max(0, y - label_h - 4)
+            draw.rectangle((x, label_y, x + label_w + 6, label_y + label_h + 4), fill=color)
+            draw.text((x + 3, label_y + 2), label, fill='white', font=font)
+        draw.text((8, 8), f'{title}: {len(segments)} boxes', fill='#111827', font=font)
+        image.save(output_path)
+    _segment_log(f'{title} debug overlay saved: {output_path}')
+    return output_path
+
+def detect_segments_with_yolo_subprocess(image_path: Path, model_path: Path, debug_image_path: Path | None = None) -> list[SegmentItem]:
     yolo_python = os.getenv('YOLO_PYTHON')
     if not yolo_python:
         raise RuntimeError('YOLO_PYTHON is not set')
@@ -502,15 +537,17 @@ def detect_segments_with_yolo_subprocess(image_path: Path, model_path: Path) -> 
         detections = json.loads(output_path.read_text(encoding='utf-8'))
         merged = _detections_to_segments(detections)
         _segment_log(f'YOLO subprocess done: raw_items={len(detections)} merged_items={len(merged)}')
+        if debug_image_path:
+            write_segment_debug_overlay(image_path, merged, debug_image_path, 'YOLO')
         return merged
     finally:
         output_path.unlink(missing_ok=True)
 
 
-def detect_segments_with_yolo(image_path: Path) -> list[SegmentItem]:
+def detect_segments_with_yolo(image_path: Path, debug_image_path: Path | None = None) -> list[SegmentItem]:
     model_path = find_yolo_model_path()
     if os.getenv('YOLO_PYTHON'):
-        return detect_segments_with_yolo_subprocess(image_path, model_path)
+        return detect_segments_with_yolo_subprocess(image_path, model_path, debug_image_path)
 
     from ultralytics import YOLO
 
@@ -536,6 +573,8 @@ def detect_segments_with_yolo(image_path: Path) -> list[SegmentItem]:
             detections.append({'label': label, 'confidence': _value_to_float(getattr(box, 'conf', 0.0)), 'xyxy': xyxy})
     merged = _detections_to_segments(detections)
     _segment_log(f'YOLO predict done: raw_items={len(detections)} merged_items={len(merged)}')
+    if debug_image_path:
+        write_segment_debug_overlay(image_path, merged, debug_image_path, 'YOLO')
     return merged
 
 
@@ -565,7 +604,7 @@ def detect_segments_with_opencv(image_path: Path) -> list[SegmentItem]:
     return result
 
 
-def detect_segments(image_path: Path, mode: str = 'balanced') -> list[SegmentItem]:
+def detect_segments(image_path: Path, mode: str = 'balanced', debug_image_path: Path | None = None) -> list[SegmentItem]:
     if mode == 'fast':
         _segment_log(f'Segmentation skipped: mode=fast image={image_path}')
         return []
@@ -574,7 +613,11 @@ def detect_segments(image_path: Path, mode: str = 'balanced') -> list[SegmentIte
     try:
         if engine in ('yolo', 'yolo11', 'yolo26'):
             _segment_log(f'Segmentation selected: YOLO forced by SEGMENT_ENGINE={engine}')
-            return detect_segments_with_yolo(image_path)[:30]
+            return (
+                detect_segments_with_yolo(image_path, debug_image_path)
+                if debug_image_path
+                else detect_segments_with_yolo(image_path)
+            )[:30]
         if engine == 'opencv':
             _segment_log('Segmentation selected: OpenCV forced by SEGMENT_ENGINE=opencv')
             return detect_segments_with_opencv(image_path)
@@ -582,7 +625,11 @@ def detect_segments(image_path: Path, mode: str = 'balanced') -> list[SegmentIte
             if has_yolo_model():
                 _segment_log('Segmentation selected: auto detected YOLO model, trying YOLO first')
                 try:
-                    yolo_items = detect_segments_with_yolo(image_path)
+                    yolo_items = (
+                        detect_segments_with_yolo(image_path, debug_image_path)
+                        if debug_image_path
+                        else detect_segments_with_yolo(image_path)
+                    )
                     if yolo_items:
                         _segment_log(f'Segmentation result: using YOLO items={len(yolo_items[:30])}')
                         return yolo_items[:30]

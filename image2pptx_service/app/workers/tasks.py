@@ -33,7 +33,10 @@ def _run_ocr_with_fallbacks(image_path: str):
 
 def run_conversion(job, mode='balanced', ppt_width=13.333, ppt_height=7.5):
     ocr_items, ocr_engine, warnings = _run_ocr_with_fallbacks(str(job['source_path']))
-    segments = combine_layout(ocr_items, detect_segments(job['source_path'], mode))
+    segments = combine_layout(
+        ocr_items,
+        detect_segments(job['source_path'], mode, debug_image_path=job['dirs']['output'] / 'yolo_detections.png'),
+    )
     manifest, manifest_path = build_manifest(job, ocr_items, segments, mode, ppt_width, ppt_height, warnings, ocr_engine=ocr_engine)
     pptx_path = build_pptx(manifest, job['job_root'], job['dirs']['output']/'result.pptx')
     preview_path, preview_warnings = render_preview(job['source_path'], job['dirs']['output']/'preview.png')
