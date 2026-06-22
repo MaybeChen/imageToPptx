@@ -185,13 +185,28 @@ def test_format_yolo_exception_explains_windows_torch_dll_error(monkeypatch):
         '[WinError 127] 找不到指定的程序。 Error loading "D:\\venv\\Lib\\site-packages\\torch\\lib\\shm.dll" or one of its dependencies.'
     )
 
+    monkeypatch.setattr(
+        segment,
+        "_diagnose_windows_torch_dll_error",
+        lambda error: "Missing direct DLL dependencies for shm.dll: c10.dll",
+    )
+
     message = _format_yolo_exception(exc)
 
     assert "Windows PyTorch DLL dependency load failed" in message
+    assert "Diagnostic: Missing direct DLL dependencies for shm.dll: c10.dll" in message
     assert "dependent DLLs is missing or ABI-incompatible" in message
     assert "Microsoft Visual C++ Redistributable 2015-2022" in message
     assert "set YOLO_PYTHON to that python.exe" in message
     assert "poetry run python -m pip install --force-reinstall torch torchvision" in message
+
+
+def test_diagnose_windows_torch_dll_error_reports_missing_target():
+    from app.pipeline import segment
+
+    exc = OSError('Error loading "D:\\venv\\Lib\\site-packages\\torch\\lib\\shm.dll" or one of its dependencies.')
+
+    assert "Loader target does not exist" in segment._diagnose_windows_torch_dll_error(exc)
 
 
 def test_detect_segments_with_yolo_uses_external_python_when_configured(monkeypatch, tmp_path, capsys):
@@ -221,3 +236,21 @@ def test_detect_segments_with_yolo_uses_external_python_when_configured(monkeypa
     output = capsys.readouterr().out
     assert "YOLO subprocess start: python=C:/working-yolo/python.exe" in output
     assert "YOLO subprocess done: raw_items=1 merged_items=1" in output
+
+
+def test_write_segment_debug_overlay_creates_annotated_image(tmp_path):
+    from PIL import Image
+    from app.pipeline.segment import write_segment_debug_overlay
+    from app.schemas import SegmentItem
+
+    source = tmp_path / "source.png"
+    output = tmp_path / "yolo_detections.png"
+    Image.new("RGB", (120, 80), "white").save(source)
+
+    write_segment_debug_overlay(
+        source,
+        [SegmentItem(type="chart", bbox_px=[10, 10, 50, 30], confidence=0.87)],
+        output,
+    )
+
+    assert output.exists()
