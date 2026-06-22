@@ -33,18 +33,20 @@ class _FakeResult:
     def __init__(self):
         self.boxes = [
             _FakeBox(0, 0.91, [10, 20, 40, 60]),
-            _FakeBox(1, 0.83, [100, 110, 200, 210]),
-            _FakeBox(2, 0.72, [20, 200, 160, 206]),
+            _FakeBox(5, 0.83, [100, 110, 200, 210]),
+            _FakeBox(10, 0.72, [20, 200, 160, 206]),
         ]
 
 
 class _FakeYOLO:
     names = _FakeResult.names
+    last_predict_kwargs = None
 
     def __init__(self, model_path):
         self.model_path = model_path
 
     def predict(self, *args, **kwargs):
+        type(self).last_predict_kwargs = kwargs
         return [_FakeResult()]
 
 
@@ -64,6 +66,21 @@ def test_find_yolo_model_path_rejects_missing_env(monkeypatch, tmp_path):
 
 
 def test_label_to_segment_type_maps_common_aliases():
+    assert _label_to_segment_type("0") == "icon"
+    assert _label_to_segment_type("1") == "icon"
+    assert _label_to_segment_type("2") == "image"
+    assert _label_to_segment_type("3") == "chart"
+    assert _label_to_segment_type("4") == "table"
+    assert _label_to_segment_type("5") == "shape"
+    assert _label_to_segment_type("6") == "shape"
+    assert _label_to_segment_type("7") == "shape"
+    assert _label_to_segment_type("8") == "shape"
+    assert _label_to_segment_type("9") == "shape"
+    assert _label_to_segment_type("10") == "line"
+    assert _label_to_segment_type("11") == "arrow"
+    assert _label_to_segment_type("12") == "background"
+    assert _label_to_segment_type("13") == "background"
+    assert _label_to_segment_type("14") == "background"
     assert _label_to_segment_type("logo") == "icon"
     assert _label_to_segment_type("picture") == "image"
     assert _label_to_segment_type("connector") == "line"
@@ -79,8 +96,11 @@ def test_detect_segments_with_yolo_maps_boxes_to_segment_items(monkeypatch, tmp_
     fake_module = types.SimpleNamespace(YOLO=_FakeYOLO)
     monkeypatch.setitem(sys.modules, "ultralytics", fake_module)
 
+    monkeypatch.delenv("YOLO_CONF", raising=False)
+
     segments = detect_segments_with_yolo(image)
 
+    assert _FakeYOLO.last_predict_kwargs["conf"] == 0.01
     assert [segment.type for segment in segments] == ["shape", "icon", "line"]
     assert segments[0].shape == "rect"
     assert segments[1].bbox_px == [10.0, 20.0, 30.0, 40.0]
@@ -103,6 +123,7 @@ def test_label_to_segment_type_ignores_text_region_and_maps_table():
     assert _label_to_segment_type("text_region") is None
     assert _label_to_segment_type("text") is None
     assert _label_to_segment_type("table") == "table"
+    assert _label_to_segment_type("4") == "table"
 
 
 def test_merge_segments_by_layer_keeps_foreground_inside_background():
@@ -185,13 +206,28 @@ def test_format_yolo_exception_explains_windows_torch_dll_error(monkeypatch):
         '[WinError 127] 找不到指定的程序。 Error loading "D:\\venv\\Lib\\site-packages\\torch\\lib\\shm.dll" or one of its dependencies.'
     )
 
+    monkeypatch.setattr(
+        segment,
+        "_diagnose_windows_torch_dll_error",
+        lambda error: "Missing direct DLL dependencies for shm.dll: c10.dll",
+    )
+
     message = _format_yolo_exception(exc)
 
     assert "Windows PyTorch DLL dependency load failed" in message
+    assert "Diagnostic: Missing direct DLL dependencies for shm.dll: c10.dll" in message
     assert "dependent DLLs is missing or ABI-incompatible" in message
     assert "Microsoft Visual C++ Redistributable 2015-2022" in message
     assert "set YOLO_PYTHON to that python.exe" in message
     assert "poetry run python -m pip install --force-reinstall torch torchvision" in message
+
+
+def test_diagnose_windows_torch_dll_error_reports_missing_target():
+    from app.pipeline import segment
+
+    exc = OSError('Error loading "D:\\venv\\Lib\\site-packages\\torch\\lib\\shm.dll" or one of its dependencies.')
+
+    assert "Loader target does not exist" in segment._diagnose_windows_torch_dll_error(exc)
 
 
 def test_detect_segments_with_yolo_uses_external_python_when_configured(monkeypatch, tmp_path, capsys):
@@ -221,3 +257,21 @@ def test_detect_segments_with_yolo_uses_external_python_when_configured(monkeypa
     output = capsys.readouterr().out
     assert "YOLO subprocess start: python=C:/working-yolo/python.exe" in output
     assert "YOLO subprocess done: raw_items=1 merged_items=1" in output
+
+
+def test_write_segment_debug_overlay_creates_annotated_image(tmp_path):
+    from PIL import Image
+    from app.pipeline.segment import write_segment_debug_overlay
+    from app.schemas import SegmentItem
+
+    source = tmp_path / "source.png"
+    output = tmp_path / "yolo_detections.png"
+    Image.new("RGB", (120, 80), "white").save(source)
+
+    write_segment_debug_overlay(
+        source,
+        [SegmentItem(type="chart", bbox_px=[10, 10, 50, 30], confidence=0.87)],
+        output,
+    )
+
+    assert output.exists()
