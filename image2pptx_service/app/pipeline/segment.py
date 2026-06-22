@@ -496,11 +496,9 @@ with open(output_path, 'w', encoding='utf-8') as f:
 
 
 
-def write_segment_debug_overlay(image_path: Path, segments: list[SegmentItem], output_path: Path, title: str = 'YOLO') -> Path:
-    from PIL import Image, ImageDraw, ImageFont
-
-    output_path.parent.mkdir(parents=True, exist_ok=True)
-    colors = {
+def _color_for_yolo_type(label: str) -> str:
+    seg_type = _label_to_segment_type(label) or 'image'
+    return {
         'background': '#9CA3AF',
         'shape': '#2563EB',
         'image': '#F97316',
@@ -509,26 +507,50 @@ def write_segment_debug_overlay(image_path: Path, segments: list[SegmentItem], o
         'table': '#14B8A6',
         'line': '#22C55E',
         'arrow': '#84CC16',
-    }
+    }.get(seg_type, '#F59E0B')
+
+
+def _draw_debug_box(draw, font, xyxy, label: str, color: str) -> None:
+    x1, y1, x2, y2 = [float(value) for value in xyxy]
+    draw.rectangle((x1, y1, x2, y2), outline=color, width=3)
+    text_bbox = draw.textbbox((x1, y1), label, font=font)
+    label_h = text_bbox[3] - text_bbox[1]
+    label_w = text_bbox[2] - text_bbox[0]
+    label_y = max(0, y1 - label_h - 4)
+    draw.rectangle((x1, label_y, x1 + label_w + 6, label_y + label_h + 4), fill=color)
+    draw.text((x1 + 3, label_y + 2), label, fill='white', font=font)
+
+
+def write_yolo_detection_debug_overlay(image_path: Path, detections: list[dict], output_path: Path, title: str = 'YOLO raw') -> Path:
+    from PIL import Image, ImageDraw, ImageFont
+
+    output_path.parent.mkdir(parents=True, exist_ok=True)
     with Image.open(image_path).convert('RGB') as image:
         draw = ImageDraw.Draw(image)
         font = ImageFont.load_default()
-        for index, segment in enumerate(segments, 1):
-            x, y, w, h = [float(value) for value in segment.bbox_px]
-            x2, y2 = x + w, y + h
-            color = colors.get(segment.type, '#F59E0B')
-            draw.rectangle((x, y, x2, y2), outline=color, width=3)
-            label = f'{index}:{segment.type} {segment.confidence:.2f}'
-            text_bbox = draw.textbbox((x, y), label, font=font)
-            label_h = text_bbox[3] - text_bbox[1]
-            label_w = text_bbox[2] - text_bbox[0]
-            label_y = max(0, y - label_h - 4)
-            draw.rectangle((x, label_y, x + label_w + 6, label_y + label_h + 4), fill=color)
-            draw.text((x + 3, label_y + 2), label, fill='white', font=font)
-        draw.text((8, 8), f'{title}: {len(segments)} boxes', fill='#111827', font=font)
+        for index, detection in enumerate(detections, 1):
+            label = _detection_label(detection)
+            class_id = detection.get('class_id')
+            display_label = f'{index}:{class_id}:{label}' if class_id is not None else f'{index}:{label}'
+            confidence = _value_to_float(detection.get('confidence', 0.0))
+            display_label = f'{display_label} {confidence:.2f}'
+            _draw_debug_box(draw, font, detection.get('xyxy', [0, 0, 0, 0]), display_label, _color_for_yolo_type(label))
+        draw.text((8, 8), f'{title}: {len(detections)} raw boxes', fill='#111827', font=font)
         image.save(output_path)
     _segment_log(f'{title} debug overlay saved: {output_path}')
     return output_path
+
+
+def write_segment_debug_overlay(image_path: Path, segments: list[SegmentItem], output_path: Path, title: str = 'segments') -> Path:
+    detections = []
+    for segment in segments:
+        x, y, w, h = [float(value) for value in segment.bbox_px]
+        detections.append({
+            'label': segment.type,
+            'confidence': segment.confidence,
+            'xyxy': [x, y, x + w, y + h],
+        })
+    return write_yolo_detection_debug_overlay(image_path, detections, output_path, title)
 
 def detect_segments_with_yolo_subprocess(image_path: Path, model_path: Path, debug_image_path: Path | None = None) -> list[SegmentItem]:
     yolo_python = os.getenv('YOLO_PYTHON')
@@ -566,6 +588,8 @@ def detect_segments_with_yolo_subprocess(image_path: Path, model_path: Path, deb
         if completed.stderr.strip():
             _segment_log(f'YOLO subprocess stderr: {completed.stderr.strip()}')
         detections = json.loads(output_path.read_text(encoding='utf-8'))
+        if debug_image_path:
+            write_yolo_detection_debug_overlay(image_path, detections, debug_image_path)
         merged = _detections_to_segments(detections)
         _segment_log(f'YOLO subprocess done: raw_items={len(detections)} merged_items={len(merged)}')
         if debug_image_path:
@@ -607,6 +631,8 @@ def detect_segments_with_yolo(image_path: Path, debug_image_path: Path | None = 
                 'confidence': _value_to_float(getattr(box, 'conf', 0.0)),
                 'xyxy': xyxy,
             })
+    if debug_image_path:
+        write_yolo_detection_debug_overlay(image_path, detections, debug_image_path)
     merged = _detections_to_segments(detections)
     _segment_log(f'YOLO predict done: raw_items={len(detections)} merged_items={len(merged)}')
     if debug_image_path:

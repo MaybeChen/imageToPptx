@@ -106,6 +106,37 @@ def test_detect_segments_with_yolo_maps_boxes_to_segment_items(monkeypatch, tmp_
     assert segments[1].bbox_px == [10.0, 20.0, 30.0, 40.0]
 
 
+def test_detect_segments_with_yolo_debug_overlay_uses_raw_detections(monkeypatch, tmp_path):
+    from app.pipeline import segment as segment_module
+
+    model = tmp_path / "model.pt"
+    model.write_text("fake")
+    image = tmp_path / "image.png"
+    image.write_text("fake")
+    debug_image = tmp_path / "debug.png"
+    monkeypatch.setenv("YOLO_MODEL_PATH", str(model))
+    fake_module = types.SimpleNamespace(YOLO=_FakeYOLO)
+    monkeypatch.setitem(sys.modules, "ultralytics", fake_module)
+    captured = {}
+
+    def fake_overlay(image_path, detections, output_path, title="YOLO raw"):
+        captured["image_path"] = image_path
+        captured["detections"] = detections
+        captured["output_path"] = output_path
+        captured["title"] = title
+        return output_path
+
+    monkeypatch.setattr(segment_module, "write_yolo_detection_debug_overlay", fake_overlay)
+
+    detect_segments_with_yolo(image, debug_image_path=debug_image)
+
+    assert captured["image_path"] == image
+    assert captured["output_path"] == debug_image
+    assert captured["title"] == "YOLO raw"
+    assert [detection["class_id"] for detection in captured["detections"]] == [0, 5, 10]
+    assert captured["detections"][0]["xyxy"] == [10, 20, 40, 60]
+
+
 def test_detect_segments_accepts_yolo26_engine(monkeypatch, tmp_path):
     from app.pipeline.segment import detect_segments
 
@@ -259,18 +290,18 @@ def test_detect_segments_with_yolo_uses_external_python_when_configured(monkeypa
     assert "YOLO subprocess done: raw_items=1 merged_items=1" in output
 
 
-def test_write_segment_debug_overlay_creates_annotated_image(tmp_path):
+def test_write_yolo_detection_debug_overlay_creates_annotated_image(tmp_path):
     from PIL import Image
-    from app.pipeline.segment import write_segment_debug_overlay
+    from app.pipeline.segment import write_yolo_detection_debug_overlay
     from app.schemas import SegmentItem
 
     source = tmp_path / "source.png"
     output = tmp_path / "yolo_detections.png"
     Image.new("RGB", (120, 80), "white").save(source)
 
-    write_segment_debug_overlay(
+    write_yolo_detection_debug_overlay(
         source,
-        [SegmentItem(type="chart", bbox_px=[10, 10, 50, 30], confidence=0.87)],
+        [{'class_id': 3, 'label': 'chart', 'xyxy': [10, 10, 60, 40], 'confidence': 0.87}],
         output,
     )
 
