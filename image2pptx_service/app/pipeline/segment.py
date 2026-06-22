@@ -2,6 +2,9 @@ from pathlib import Path
 import json
 import logging
 import os
+import platform
+import re
+import struct
 import subprocess
 import tempfile
 import textwrap
@@ -18,6 +21,108 @@ def _segment_log(message: str) -> None:
     logger.info(text)
 
 
+def _extract_windows_dll_path(message: str) -> Path | None:
+    match = re.search(r'Error loading "([^"]+)"', message, flags=re.IGNORECASE)
+    if not match:
+        return None
+    return Path(match.group(1))
+
+
+def _read_pe_imports(dll_path: Path) -> list[str]:
+    data = dll_path.read_bytes()
+    if len(data) < 0x40 or data[:2] != b'MZ':
+        return []
+    pe_offset = struct.unpack_from('<I', data, 0x3C)[0]
+    if pe_offset + 248 > len(data) or data[pe_offset:pe_offset + 4] != b'PE\0\0':
+        return []
+    number_of_sections = struct.unpack_from('<H', data, pe_offset + 6)[0]
+    optional_header_size = struct.unpack_from('<H', data, pe_offset + 20)[0]
+    optional_header_offset = pe_offset + 24
+    magic = struct.unpack_from('<H', data, optional_header_offset)[0]
+    data_directory_offset = optional_header_offset + (112 if magic == 0x20B else 96)
+    import_rva, import_size = struct.unpack_from('<II', data, data_directory_offset + 8)
+    if not import_rva or not import_size:
+        return []
+    section_offset = optional_header_offset + optional_header_size
+    sections: list[tuple[int, int, int, int]] = []
+    for index in range(number_of_sections):
+        offset = section_offset + index * 40
+        virtual_size, virtual_address, raw_size, raw_pointer = struct.unpack_from('<IIII', data, offset + 8)
+        sections.append((virtual_address, max(virtual_size, raw_size), raw_pointer, raw_size))
+
+    def rva_to_offset(rva: int) -> int | None:
+        for virtual_address, virtual_size, raw_pointer, raw_size in sections:
+            if virtual_address <= rva < virtual_address + virtual_size:
+                file_offset = raw_pointer + (rva - virtual_address)
+                if file_offset < raw_pointer + raw_size and file_offset < len(data):
+                    return file_offset
+        return None
+
+    imports: list[str] = []
+    descriptor_offset = rva_to_offset(import_rva)
+    if descriptor_offset is None:
+        return []
+    while descriptor_offset + 20 <= len(data):
+        original_first_thunk, _time, _forwarder, name_rva, first_thunk = struct.unpack_from(
+            '<IIIII', data, descriptor_offset
+        )
+        if not any((original_first_thunk, name_rva, first_thunk)):
+            break
+        name_offset = rva_to_offset(name_rva)
+        if name_offset is not None:
+            end = data.find(b'\0', name_offset)
+            if end != -1:
+                imports.append(data[name_offset:end].decode('ascii', errors='replace'))
+        descriptor_offset += 20
+    return imports
+
+
+def _windows_dll_search_dirs(dll_path: Path) -> list[Path]:
+    dirs = [dll_path.parent]
+    windir = os.environ.get('WINDIR', r'C:\Windows')
+    dirs.extend([Path(windir) / 'System32', Path(windir) / 'SysWOW64', Path(windir)])
+    dirs.extend(Path(path) for path in os.environ.get('PATH', '').split(os.pathsep) if path)
+    seen: set[str] = set()
+    unique_dirs: list[Path] = []
+    for directory in dirs:
+        key = str(directory).lower()
+        if key not in seen:
+            seen.add(key)
+            unique_dirs.append(directory)
+    return unique_dirs
+
+
+def _find_windows_dll(name: str, search_dirs: list[Path]) -> Path | None:
+    for directory in search_dirs:
+        candidate = directory / name
+        if candidate.exists():
+            return candidate
+    return None
+
+
+def _diagnose_windows_torch_dll_error(exc: Exception) -> str:
+    dll_path = _extract_windows_dll_path(str(exc))
+    if not dll_path:
+        return 'No DLL path was found in the loader message, so Windows did not expose the missing dependency name.'
+    if not dll_path.exists():
+        return f'Loader target does not exist: {dll_path}'
+    try:
+        imports = _read_pe_imports(dll_path)
+    except Exception as diagnostic_exc:  # noqa: BLE001 - diagnostics must not mask the original load error
+        return f'Could not inspect {dll_path} imports: {diagnostic_exc.__class__.__name__}: {diagnostic_exc}'
+    if not imports:
+        return f'No direct imported DLLs were found in {dll_path}; the missing dependency may be delay-loaded or transitive.'
+    search_dirs = _windows_dll_search_dirs(dll_path)
+    missing = [name for name in imports if _find_windows_dll(name, search_dirs) is None]
+    if missing:
+        return f'Missing direct DLL dependencies for {dll_path.name}: {", ".join(missing)}'
+    python_bits = platform.architecture()[0]
+    return (
+        f'All direct DLL dependencies for {dll_path.name} were found in the current DLL search path. '
+        f'The remaining cause is likely a transitive/delay-loaded dependency, architecture mismatch, '
+        f'or incompatible binary version (current Python: {python_bits}).'
+    )
+
 def _format_yolo_exception(exc: Exception) -> str:
     detail = f'{exc.__class__.__name__}: {exc}'
     message = str(exc).lower()
@@ -28,8 +133,10 @@ def _format_yolo_exception(exc: Exception) -> str:
         and ('torch' in message or 'shm.dll' in message or 'fbgemm.dll' in message)
     )
     if is_windows_torch_dll_error:
+        diagnostic = _diagnose_windows_torch_dll_error(exc)
         return (
-            f'{detail}. Windows PyTorch DLL dependency load failed; YOLO was selected but cannot start. The named DLL file can exist while one of its dependent DLLs is missing or ABI-incompatible. '
+            f'{detail}. Windows PyTorch DLL dependency load failed; YOLO was selected but cannot start. Diagnostic: {diagnostic}. '
+            'The named DLL file can exist while one of its dependent DLLs is missing or ABI-incompatible. '
             'Install/repair Microsoft Visual C++ Redistributable 2015-2022. If you already have another Python environment where YOLO works, '
             'set YOLO_PYTHON to that python.exe; otherwise reinstall a CPU PyTorch wheel inside this Poetry environment: '
             'poetry run python -m pip install --force-reinstall torch torchvision --index-url https://download.pytorch.org/whl/cpu'

@@ -185,13 +185,28 @@ def test_format_yolo_exception_explains_windows_torch_dll_error(monkeypatch):
         '[WinError 127] 找不到指定的程序。 Error loading "D:\\venv\\Lib\\site-packages\\torch\\lib\\shm.dll" or one of its dependencies.'
     )
 
+    monkeypatch.setattr(
+        segment,
+        "_diagnose_windows_torch_dll_error",
+        lambda error: "Missing direct DLL dependencies for shm.dll: c10.dll",
+    )
+
     message = _format_yolo_exception(exc)
 
     assert "Windows PyTorch DLL dependency load failed" in message
+    assert "Diagnostic: Missing direct DLL dependencies for shm.dll: c10.dll" in message
     assert "dependent DLLs is missing or ABI-incompatible" in message
     assert "Microsoft Visual C++ Redistributable 2015-2022" in message
     assert "set YOLO_PYTHON to that python.exe" in message
     assert "poetry run python -m pip install --force-reinstall torch torchvision" in message
+
+
+def test_diagnose_windows_torch_dll_error_reports_missing_target():
+    from app.pipeline import segment
+
+    exc = OSError('Error loading "D:\\venv\\Lib\\site-packages\\torch\\lib\\shm.dll" or one of its dependencies.')
+
+    assert "Loader target does not exist" in segment._diagnose_windows_torch_dll_error(exc)
 
 
 def test_detect_segments_with_yolo_uses_external_python_when_configured(monkeypatch, tmp_path, capsys):
