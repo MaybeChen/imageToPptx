@@ -125,6 +125,7 @@ def test_filter_ocr_items_for_manifest_can_keep_short_labels_when_disabled(monke
 
 
 def test_filter_ocr_items_for_manifest_drops_text_inside_icon_asset_even_when_long(monkeypatch):
+    monkeypatch.setenv("OCR_FILTER_VISUAL_ASSET_TEXT", "1")
     monkeypatch.setenv("OCR_FILTER_SHORT_GLYPHS", "0")
     ocr_items = [
         OcrItem(text="MENU", bbox_px=[112, 112, 48, 18], confidence=0.88),
@@ -136,6 +137,17 @@ def test_filter_ocr_items_for_manifest_drops_text_inside_icon_asset_even_when_lo
 
     assert removed == 1
     assert [item.text for item in kept] == ["Revenue"]
+
+
+def test_filter_ocr_items_for_manifest_keeps_text_inside_visual_assets_by_default(monkeypatch):
+    monkeypatch.setenv("OCR_FILTER_SHORT_GLYPHS", "0")
+    ocr_items = [OcrItem(text="MENU", bbox_px=[112, 112, 48, 18], confidence=0.88)]
+    segments = [SegmentItem(type="icon", bbox_px=[100, 100, 80, 80], confidence=0.9)]
+
+    kept, removed = filter_ocr_items_for_manifest(ocr_items, segments, width_px=1000, height_px=600)
+
+    assert removed == 0
+    assert kept == ocr_items
 
 
 def test_filter_ocr_items_for_manifest_can_keep_text_inside_visual_assets_when_disabled(monkeypatch):
@@ -151,6 +163,7 @@ def test_filter_ocr_items_for_manifest_can_keep_text_inside_visual_assets_when_d
 
 
 def test_filter_ocr_items_for_manifest_drops_text_inside_small_image_asset(monkeypatch):
+    monkeypatch.setenv("OCR_FILTER_VISUAL_ASSET_TEXT", "1")
     monkeypatch.setenv("OCR_FILTER_SHORT_GLYPHS", "0")
     ocr_items = [OcrItem(text="OK", bbox_px=[112, 112, 30, 18], confidence=0.88)]
     segments = [SegmentItem(type="image", bbox_px=[100, 100, 100, 100], confidence=0.9)]

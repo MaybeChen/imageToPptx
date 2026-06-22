@@ -74,3 +74,4 @@ class ConvertResponse(BaseModel):
     manifest_url: str
     quality_report_url: str
     preview_url: str
+    yolo_debug_url: Optional[str] = None
