@@ -148,6 +148,8 @@ def test_detect_segments_with_yolo_maps_boxes_to_segment_items(monkeypatch, tmp_
 
     monkeypatch.delenv("YOLO_CONF", raising=False)
 
+    monkeypatch.delenv("YOLO_CONF", raising=False)
+
     segments = detect_segments_with_yolo(image)
 
     assert _FakeAutoDetectionModel.last_kwargs["confidence_threshold"] == 0.01
