@@ -50,6 +50,57 @@ class _FakeYOLO:
         return [_FakeResult()]
 
 
+class _FakeSahiBBox:
+    def __init__(self, xyxy):
+        self.minx, self.miny, self.maxx, self.maxy = xyxy
+
+
+class _FakeSahiCategory:
+    def __init__(self, class_id, name):
+        self.id = class_id
+        self.name = name
+
+
+class _FakeSahiScore:
+    def __init__(self, value):
+        self.value = value
+
+
+class _FakeSahiPrediction:
+    def __init__(self, class_id, name, confidence, xyxy):
+        self.category = _FakeSahiCategory(class_id, name)
+        self.score = _FakeSahiScore(confidence)
+        self.bbox = _FakeSahiBBox(xyxy)
+
+
+class _FakeSahiResult:
+    object_prediction_list = [
+        _FakeSahiPrediction(0, "logo", 0.91, [10, 20, 40, 60]),
+        _FakeSahiPrediction(5, "rectangle", 0.83, [100, 110, 200, 210]),
+        _FakeSahiPrediction(10, "connector", 0.72, [20, 200, 160, 206]),
+    ]
+
+
+class _FakeAutoDetectionModel:
+    last_kwargs = None
+
+    @classmethod
+    def from_pretrained(cls, **kwargs):
+        cls.last_kwargs = kwargs
+        return cls()
+
+
+def _install_fake_sahi(monkeypatch):
+    def fake_get_sliced_prediction(*args, **kwargs):
+        _install_fake_sahi.last_args = args
+        _install_fake_sahi.last_kwargs = kwargs
+        return _FakeSahiResult()
+
+    monkeypatch.setitem(sys.modules, "sahi", types.SimpleNamespace(AutoDetectionModel=_FakeAutoDetectionModel))
+    monkeypatch.setitem(sys.modules, "sahi.predict", types.SimpleNamespace(get_sliced_prediction=fake_get_sliced_prediction))
+    return fake_get_sliced_prediction
+
+
 def test_find_yolo_model_path_uses_env(monkeypatch, tmp_path):
     model = tmp_path / "model.pt"
     model.write_text("fake")
@@ -93,14 +144,17 @@ def test_detect_segments_with_yolo_maps_boxes_to_segment_items(monkeypatch, tmp_
     image = tmp_path / "image.png"
     image.write_text("fake")
     monkeypatch.setenv("YOLO_MODEL_PATH", str(model))
-    fake_module = types.SimpleNamespace(YOLO=_FakeYOLO)
-    monkeypatch.setitem(sys.modules, "ultralytics", fake_module)
+    _install_fake_sahi(monkeypatch)
+
+    monkeypatch.delenv("YOLO_CONF", raising=False)
 
     monkeypatch.delenv("YOLO_CONF", raising=False)
 
     segments = detect_segments_with_yolo(image)
 
-    assert _FakeYOLO.last_predict_kwargs["conf"] == 0.01
+    assert _FakeAutoDetectionModel.last_kwargs["confidence_threshold"] == 0.01
+    assert _install_fake_sahi.last_kwargs["slice_height"] == 512
+    assert _install_fake_sahi.last_kwargs["slice_width"] == 512
     assert [segment.type for segment in segments] == ["shape", "icon", "line"]
     assert segments[0].shape == "rect"
     assert segments[1].bbox_px == [10.0, 20.0, 30.0, 40.0]
@@ -115,8 +169,7 @@ def test_detect_segments_with_yolo_debug_overlay_uses_raw_detections(monkeypatch
     image.write_text("fake")
     debug_image = tmp_path / "debug.png"
     monkeypatch.setenv("YOLO_MODEL_PATH", str(model))
-    fake_module = types.SimpleNamespace(YOLO=_FakeYOLO)
-    monkeypatch.setitem(sys.modules, "ultralytics", fake_module)
+    _install_fake_sahi(monkeypatch)
     captured = {}
 
     def fake_overlay(image_path, detections, output_path, title="YOLO raw"):

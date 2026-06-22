@@ -141,8 +141,8 @@ def _format_yolo_exception(exc: Exception) -> str:
             'set YOLO_PYTHON to that python.exe; otherwise reinstall a CPU PyTorch wheel inside this Poetry environment: '
             'poetry run python -m pip install --force-reinstall torch torchvision --index-url https://download.pytorch.org/whl/cpu'
         )
-    if isinstance(exc, ModuleNotFoundError) and getattr(exc, 'name', '') == 'ultralytics':
-        return f'{detail}. Install YOLO dependencies in this environment with poetry install --extras yolo, or set YOLO_PYTHON to a Python executable where your existing YOLO inference already works'
+    if isinstance(exc, ModuleNotFoundError) and getattr(exc, 'name', '') in ('ultralytics', 'sahi'):
+        return f'{detail}. Install YOLO/SAHI dependencies in this environment with poetry install, or set YOLO_PYTHON to a Python executable where SAHI+YOLO inference already works'
     if isinstance(exc, subprocess.CalledProcessError):
         stderr = (exc.stderr or '').strip()
         stdout = (exc.stdout or '').strip()
@@ -450,19 +450,27 @@ def _detections_to_segments(detections: list[dict]) -> list[SegmentItem]:
 _SUBPROCESS_YOLO_SCRIPT = """
 import json
 import sys
-from ultralytics import YOLO
+from sahi import AutoDetectionModel
+from sahi.predict import get_sliced_prediction
 
 
-def value_to_float(value):
-    if hasattr(value, 'item'):
-        return float(value.item())
-    return float(value)
-
-
-def xyxy_to_list(value):
-    if hasattr(value, 'tolist'):
-        return value.tolist()
-    return [float(v) for v in value]
+def object_prediction_to_detection(prediction):
+    bbox = getattr(prediction, 'bbox', None)
+    category = getattr(prediction, 'category', None)
+    score = getattr(prediction, 'score', None)
+    minx = getattr(bbox, 'minx', 0.0)
+    miny = getattr(bbox, 'miny', 0.0)
+    maxx = getattr(bbox, 'maxx', 0.0)
+    maxy = getattr(bbox, 'maxy', 0.0)
+    category_id = getattr(category, 'id', None)
+    category_name = getattr(category, 'name', category_id)
+    score_value = getattr(score, 'value', score if score is not None else 0.0)
+    return {
+        'class_id': category_id,
+        'label': str(category_name),
+        'confidence': float(score_value),
+        'xyxy': [float(minx), float(miny), float(maxx), float(maxy)],
+    }
 
 
 image_path, model_path, output_path = sys.argv[1:4]
@@ -470,26 +478,30 @@ conf = float(sys.argv[4])
 iou = float(sys.argv[5])
 imgsz = int(sys.argv[6])
 max_det = int(sys.argv[7])
-model = YOLO(model_path)
-results = model.predict(image_path, conf=conf, iou=iou, imgsz=imgsz, max_det=max_det, verbose=False)
-names = getattr(model, 'names', {}) or {}
-detections = []
-for result in results or []:
-    result_names = getattr(result, 'names', None) or names
-    boxes = getattr(result, 'boxes', None)
-    if boxes is None:
-        continue
-    for box in boxes:
-        cls_id = int(value_to_float(getattr(box, 'cls', 0)))
-        label = str(result_names.get(cls_id, cls_id)) if isinstance(result_names, dict) else str(cls_id)
-        raw_xyxy = getattr(box, 'xyxy')
-        xyxy = raw_xyxy[0] if hasattr(raw_xyxy, '__getitem__') else raw_xyxy
-        detections.append({
-            'class_id': cls_id,
-            'label': label,
-            'confidence': value_to_float(getattr(box, 'conf', 0.0)),
-            'xyxy': xyxy_to_list(xyxy),
-        })
+slice_height = int(sys.argv[8])
+slice_width = int(sys.argv[9])
+overlap_height_ratio = float(sys.argv[10])
+overlap_width_ratio = float(sys.argv[11])
+device = sys.argv[12]
+detection_model = AutoDetectionModel.from_pretrained(
+    model_type='ultralytics',
+    model_path=model_path,
+    confidence_threshold=conf,
+    device=device,
+)
+result = get_sliced_prediction(
+    image_path,
+    detection_model,
+    slice_height=slice_height,
+    slice_width=slice_width,
+    overlap_height_ratio=overlap_height_ratio,
+    overlap_width_ratio=overlap_width_ratio,
+    postprocess_match_metric='IOU',
+    postprocess_match_threshold=iou,
+    perform_standard_pred=False,
+    verbose=0,
+)
+detections = [object_prediction_to_detection(prediction) for prediction in result.object_prediction_list[:max_det]]
 with open(output_path, 'w', encoding='utf-8') as f:
     json.dump(detections, f)
 """
@@ -552,6 +564,37 @@ def write_segment_debug_overlay(image_path: Path, segments: list[SegmentItem], o
         })
     return write_yolo_detection_debug_overlay(image_path, detections, output_path, title)
 
+
+def _sahi_prediction_to_detection(prediction) -> dict:
+    bbox = getattr(prediction, 'bbox', None)
+    category = getattr(prediction, 'category', None)
+    score = getattr(prediction, 'score', None)
+    category_id = getattr(category, 'id', None)
+    category_name = getattr(category, 'name', category_id)
+    score_value = getattr(score, 'value', score if score is not None else 0.0)
+    return {
+        'class_id': category_id,
+        'label': str(category_name),
+        'confidence': _value_to_float(score_value),
+        'xyxy': [
+            _value_to_float(getattr(bbox, 'minx', 0.0)),
+            _value_to_float(getattr(bbox, 'miny', 0.0)),
+            _value_to_float(getattr(bbox, 'maxx', 0.0)),
+            _value_to_float(getattr(bbox, 'maxy', 0.0)),
+        ],
+    }
+
+
+def _sahi_settings() -> dict:
+    return {
+        'slice_height': _env_int('SAHI_SLICE_HEIGHT', 512),
+        'slice_width': _env_int('SAHI_SLICE_WIDTH', 512),
+        'overlap_height_ratio': _env_float('SAHI_OVERLAP_HEIGHT_RATIO', 0.2),
+        'overlap_width_ratio': _env_float('SAHI_OVERLAP_WIDTH_RATIO', 0.2),
+        'device': os.getenv('SAHI_DEVICE', 'cpu'),
+    }
+
+
 def detect_segments_with_yolo_subprocess(image_path: Path, model_path: Path, debug_image_path: Path | None = None) -> list[SegmentItem]:
     yolo_python = os.getenv('YOLO_PYTHON')
     if not yolo_python:
@@ -560,6 +603,7 @@ def detect_segments_with_yolo_subprocess(image_path: Path, model_path: Path, deb
     iou = _env_float('YOLO_IOU', 0.7)
     imgsz = _env_int('YOLO_IMGSZ', 1024)
     max_det = _env_int('YOLO_MAX_DET', 80)
+    sahi_settings = _sahi_settings()
     timeout = _env_int('YOLO_SUBPROCESS_TIMEOUT', 120)
     with tempfile.NamedTemporaryFile(suffix='.json', delete=False) as output:
         output_path = Path(output.name)
@@ -577,6 +621,11 @@ def detect_segments_with_yolo_subprocess(image_path: Path, model_path: Path, deb
                 str(iou),
                 str(imgsz),
                 str(max_det),
+                str(sahi_settings['slice_height']),
+                str(sahi_settings['slice_width']),
+                str(sahi_settings['overlap_height_ratio']),
+                str(sahi_settings['overlap_width_ratio']),
+                sahi_settings['device'],
             ],
             check=True,
             capture_output=True,
@@ -604,33 +653,42 @@ def detect_segments_with_yolo(image_path: Path, debug_image_path: Path | None = 
     if os.getenv('YOLO_PYTHON'):
         return detect_segments_with_yolo_subprocess(image_path, model_path, debug_image_path)
 
-    from ultralytics import YOLO
+    from sahi import AutoDetectionModel
+    from sahi.predict import get_sliced_prediction
 
-    _segment_log(f'YOLO enabled: loading model={model_path} image={image_path}')
-    model = YOLO(str(model_path))
     conf = _env_float('YOLO_CONF', 0.01)
     iou = _env_float('YOLO_IOU', 0.7)
-    imgsz = _env_int('YOLO_IMGSZ', 1024)
     max_det = _env_int('YOLO_MAX_DET', 80)
-    _segment_log(f'YOLO predict start: conf={conf} iou={iou} imgsz={imgsz} max_det={max_det}')
-    results = model.predict(str(image_path), conf=conf, iou=iou, imgsz=imgsz, max_det=max_det, verbose=False)
-    names = getattr(model, 'names', {}) or {}
-    detections: list[dict] = []
-    for result in results or []:
-        result_names = getattr(result, 'names', None) or names
-        boxes = getattr(result, 'boxes', None)
-        if boxes is None:
-            continue
-        for box in boxes:
-            cls_id = int(_value_to_float(getattr(box, 'cls', 0)))
-            label = str(result_names.get(cls_id, cls_id)) if isinstance(result_names, dict) else str(cls_id)
-            xyxy = getattr(box, 'xyxy')[0] if hasattr(getattr(box, 'xyxy'), '__getitem__') else getattr(box, 'xyxy')
-            detections.append({
-                'class_id': cls_id,
-                'label': label,
-                'confidence': _value_to_float(getattr(box, 'conf', 0.0)),
-                'xyxy': xyxy,
-            })
+    sahi_settings = _sahi_settings()
+    _segment_log(
+        f"YOLO SAHI enabled: loading model={model_path} image={image_path} "
+        f"conf={conf} iou={iou} max_det={max_det} "
+        f"slice={sahi_settings['slice_width']}x{sahi_settings['slice_height']} "
+        f"overlap={sahi_settings['overlap_width_ratio']}x{sahi_settings['overlap_height_ratio']} "
+        f"device={sahi_settings['device']}"
+    )
+    detection_model = AutoDetectionModel.from_pretrained(
+        model_type='ultralytics',
+        model_path=str(model_path),
+        confidence_threshold=conf,
+        device=sahi_settings['device'],
+    )
+    result = get_sliced_prediction(
+        str(image_path),
+        detection_model,
+        slice_height=sahi_settings['slice_height'],
+        slice_width=sahi_settings['slice_width'],
+        overlap_height_ratio=sahi_settings['overlap_height_ratio'],
+        overlap_width_ratio=sahi_settings['overlap_width_ratio'],
+        postprocess_match_metric='IOU',
+        postprocess_match_threshold=iou,
+        perform_standard_pred=False,
+        verbose=0,
+    )
+    detections = [
+        _sahi_prediction_to_detection(prediction)
+        for prediction in getattr(result, 'object_prediction_list', [])[:max_det]
+    ]
     if debug_image_path:
         write_yolo_detection_debug_overlay(image_path, detections, debug_image_path)
     merged = _detections_to_segments(detections)
