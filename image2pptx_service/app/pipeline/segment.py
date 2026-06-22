@@ -14,6 +14,26 @@ def _segment_log(message: str) -> None:
     logger.info(text)
 
 
+def _format_yolo_exception(exc: Exception) -> str:
+    detail = f'{exc.__class__.__name__}: {exc}'
+    message = str(exc).lower()
+    is_windows_torch_dll_error = (
+        os.name == 'nt'
+        and isinstance(exc, OSError)
+        and ('winerror 126' in message or 'winerror 127' in message)
+        and ('torch' in message or 'shm.dll' in message or 'fbgemm.dll' in message)
+    )
+    if is_windows_torch_dll_error:
+        return (
+            f'{detail}. Windows PyTorch DLL dependency load failed; YOLO was selected but cannot start. '
+            'Install/repair Microsoft Visual C++ Redistributable 2015-2022, then reinstall a CPU PyTorch wheel inside this Poetry environment: '
+            'poetry run python -m pip install --force-reinstall torch torchvision --index-url https://download.pytorch.org/whl/cpu'
+        )
+    if isinstance(exc, ModuleNotFoundError) and getattr(exc, 'name', '') == 'ultralytics':
+        return f'{detail}. Install project dependencies again so the default Ultralytics runtime is available: poetry install'
+    return detail
+
+
 SEGMENT_LAYER_PRIORITY = {
     'background': 0,
     'shape': 1,
@@ -344,7 +364,7 @@ def detect_segments(image_path: Path, mode: str = 'balanced') -> list[SegmentIte
                         return yolo_items[:30]
                     _segment_log('Segmentation fallback: YOLO returned 0 items, using OpenCV')
                 except Exception as exc:
-                    _segment_log(f'Segmentation fallback: YOLO failed with {exc.__class__.__name__}: {exc}; using OpenCV')
+                    _segment_log(f'Segmentation fallback: YOLO failed with {_format_yolo_exception(exc)}; using OpenCV')
             else:
                 _segment_log('Segmentation selected: auto found no YOLO model, using OpenCV')
         else:
@@ -353,5 +373,5 @@ def detect_segments(image_path: Path, mode: str = 'balanced') -> list[SegmentIte
         _segment_log(f'Segmentation result: using OpenCV items={len(result)}')
         return result
     except Exception as exc:
-        _segment_log(f'Segmentation failed: {exc.__class__.__name__}: {exc}')
+        _segment_log(f'Segmentation failed: {_format_yolo_exception(exc)}')
         return []

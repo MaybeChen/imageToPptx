@@ -6,6 +6,7 @@ import pytest
 from app.pipeline.segment import (
     detect_segments_with_yolo,
     find_yolo_model_path,
+    _format_yolo_exception,
     _label_to_segment_type,
 )
 
@@ -173,3 +174,18 @@ def test_detect_segments_auto_falls_back_to_opencv_when_yolo_fails(monkeypatch, 
     output = capsys.readouterr().out
     assert "Segmentation fallback: YOLO failed with RuntimeError: boom; using OpenCV" in output
     assert "Segmentation result: using OpenCV items=1" in output
+
+
+def test_format_yolo_exception_explains_windows_torch_dll_error(monkeypatch):
+    from app.pipeline import segment
+
+    monkeypatch.setattr(segment.os, "name", "nt")
+    exc = OSError(
+        '[WinError 127] 找不到指定的程序。 Error loading "D:\\venv\\Lib\\site-packages\\torch\\lib\\shm.dll" or one of its dependencies.'
+    )
+
+    message = _format_yolo_exception(exc)
+
+    assert "Windows PyTorch DLL dependency load failed" in message
+    assert "Microsoft Visual C++ Redistributable 2015-2022" in message
+    assert "poetry run python -m pip install --force-reinstall torch torchvision" in message
