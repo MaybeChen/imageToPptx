@@ -592,6 +592,8 @@ def detect_segments_with_yolo_subprocess(image_path: Path, model_path: Path, deb
             write_yolo_detection_debug_overlay(image_path, detections, debug_image_path)
         merged = _detections_to_segments(detections)
         _segment_log(f'YOLO subprocess done: raw_items={len(detections)} merged_items={len(merged)}')
+        if debug_image_path:
+            write_segment_debug_overlay(image_path, merged, debug_image_path, 'YOLO')
         return merged
     finally:
         output_path.unlink(missing_ok=True)
@@ -633,6 +635,8 @@ def detect_segments_with_yolo(image_path: Path, debug_image_path: Path | None = 
         write_yolo_detection_debug_overlay(image_path, detections, debug_image_path)
     merged = _detections_to_segments(detections)
     _segment_log(f'YOLO predict done: raw_items={len(detections)} merged_items={len(merged)}')
+    if debug_image_path:
+        write_segment_debug_overlay(image_path, merged, debug_image_path, 'YOLO')
     return merged
 
 
