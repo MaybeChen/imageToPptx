@@ -1,3 +1,4 @@
+from pathlib import Path
 import sys
 import types
 
@@ -188,4 +189,34 @@ def test_format_yolo_exception_explains_windows_torch_dll_error(monkeypatch):
 
     assert "Windows PyTorch DLL dependency load failed" in message
     assert "Microsoft Visual C++ Redistributable 2015-2022" in message
+    assert "set YOLO_PYTHON to that python.exe" in message
     assert "poetry run python -m pip install --force-reinstall torch torchvision" in message
+
+
+def test_detect_segments_with_yolo_uses_external_python_when_configured(monkeypatch, tmp_path, capsys):
+    import json
+    import subprocess
+
+    model = tmp_path / "best.pt"
+    image = tmp_path / "image.png"
+    model.write_text("fake")
+    image.write_text("fake")
+    monkeypatch.setenv("YOLO_MODEL_PATH", str(model))
+    monkeypatch.setenv("YOLO_PYTHON", "C:/working-yolo/python.exe")
+
+    def fake_run(args, **kwargs):
+        output_path = args[5]
+        Path(output_path).write_text(json.dumps([
+            {"label": "logo", "confidence": 0.9, "xyxy": [1, 2, 11, 22]}
+        ]), encoding="utf-8")
+        return subprocess.CompletedProcess(args, 0, stdout="", stderr="")
+
+    monkeypatch.setattr("app.pipeline.segment.subprocess.run", fake_run)
+
+    segments = detect_segments_with_yolo(image)
+
+    assert segments[0].type == "icon"
+    assert segments[0].bbox_px == [1.0, 2.0, 10.0, 20.0]
+    output = capsys.readouterr().out
+    assert "YOLO subprocess start: python=C:/working-yolo/python.exe" in output
+    assert "YOLO subprocess done: raw_items=1 merged_items=1" in output

@@ -1,6 +1,10 @@
 from pathlib import Path
+import json
 import logging
 import os
+import subprocess
+import tempfile
+import textwrap
 from app.config import settings
 from app.schemas import SegmentItem
 
@@ -26,11 +30,18 @@ def _format_yolo_exception(exc: Exception) -> str:
     if is_windows_torch_dll_error:
         return (
             f'{detail}. Windows PyTorch DLL dependency load failed; YOLO was selected but cannot start. '
-            'Install/repair Microsoft Visual C++ Redistributable 2015-2022, then reinstall a CPU PyTorch wheel inside this Poetry environment: '
+            'Install/repair Microsoft Visual C++ Redistributable 2015-2022. If you already have another Python environment where YOLO works, '
+            'set YOLO_PYTHON to that python.exe; otherwise reinstall a CPU PyTorch wheel inside this Poetry environment: '
             'poetry run python -m pip install --force-reinstall torch torchvision --index-url https://download.pytorch.org/whl/cpu'
         )
     if isinstance(exc, ModuleNotFoundError) and getattr(exc, 'name', '') == 'ultralytics':
-        return f'{detail}. Install project dependencies again so the default Ultralytics runtime is available: poetry install'
+        return f'{detail}. Install YOLO dependencies in this environment with poetry install --extras yolo, or set YOLO_PYTHON to a Python executable where your existing YOLO inference already works'
+    if isinstance(exc, subprocess.CalledProcessError):
+        stderr = (exc.stderr or '').strip()
+        stdout = (exc.stdout or '').strip()
+        subprocess_detail = '; '.join(part for part in (f'stdout={stdout}' if stdout else '', f'stderr={stderr}' if stderr else '') if part)
+        if subprocess_detail:
+            return f'{detail}. YOLO_PYTHON subprocess failed: {subprocess_detail}'
     return detail
 
 
@@ -280,10 +291,122 @@ def _value_to_float(value, default: float = 0.0) -> float:
         return default
 
 
+def _detections_to_segments(detections: list[dict]) -> list[SegmentItem]:
+    items: list[SegmentItem] = []
+    for detection in detections:
+        label = str(detection.get('label', ''))
+        seg_type = _label_to_segment_type(label)
+        if seg_type is None:
+            continue
+        bbox = _xyxy_to_bbox(detection.get('xyxy', [0, 0, 0, 0]))
+        if bbox[2] <= 0 or bbox[3] <= 0:
+            continue
+        items.append(SegmentItem(
+            type=seg_type,
+            shape=_label_to_shape(label),
+            bbox_px=bbox,
+            confidence=_value_to_float(detection.get('confidence', 0.0)),
+        ))
+    return merge_segments_by_layer(items)
+
+
+_SUBPROCESS_YOLO_SCRIPT = """
+import json
+import sys
+from ultralytics import YOLO
+
+
+def value_to_float(value):
+    if hasattr(value, 'item'):
+        return float(value.item())
+    return float(value)
+
+
+def xyxy_to_list(value):
+    if hasattr(value, 'tolist'):
+        return value.tolist()
+    return [float(v) for v in value]
+
+
+image_path, model_path, output_path = sys.argv[1:4]
+conf = float(sys.argv[4])
+iou = float(sys.argv[5])
+imgsz = int(sys.argv[6])
+max_det = int(sys.argv[7])
+model = YOLO(model_path)
+results = model.predict(image_path, conf=conf, iou=iou, imgsz=imgsz, max_det=max_det, verbose=False)
+names = getattr(model, 'names', {}) or {}
+detections = []
+for result in results or []:
+    result_names = getattr(result, 'names', None) or names
+    boxes = getattr(result, 'boxes', None)
+    if boxes is None:
+        continue
+    for box in boxes:
+        cls_id = int(value_to_float(getattr(box, 'cls', 0)))
+        label = str(result_names.get(cls_id, cls_id)) if isinstance(result_names, dict) else str(cls_id)
+        raw_xyxy = getattr(box, 'xyxy')
+        xyxy = raw_xyxy[0] if hasattr(raw_xyxy, '__getitem__') else raw_xyxy
+        detections.append({
+            'label': label,
+            'confidence': value_to_float(getattr(box, 'conf', 0.0)),
+            'xyxy': xyxy_to_list(xyxy),
+        })
+with open(output_path, 'w', encoding='utf-8') as f:
+    json.dump(detections, f)
+"""
+
+
+def detect_segments_with_yolo_subprocess(image_path: Path, model_path: Path) -> list[SegmentItem]:
+    yolo_python = os.getenv('YOLO_PYTHON')
+    if not yolo_python:
+        raise RuntimeError('YOLO_PYTHON is not set')
+    conf = _env_float('YOLO_CONF', 0.25)
+    iou = _env_float('YOLO_IOU', 0.7)
+    imgsz = _env_int('YOLO_IMGSZ', 1024)
+    max_det = _env_int('YOLO_MAX_DET', 80)
+    timeout = _env_int('YOLO_SUBPROCESS_TIMEOUT', 120)
+    with tempfile.NamedTemporaryFile(suffix='.json', delete=False) as output:
+        output_path = Path(output.name)
+    try:
+        _segment_log(f'YOLO subprocess start: python={yolo_python} model={model_path} image={image_path}')
+        completed = subprocess.run(
+            [
+                yolo_python,
+                '-c',
+                textwrap.dedent(_SUBPROCESS_YOLO_SCRIPT),
+                str(image_path),
+                str(model_path),
+                str(output_path),
+                str(conf),
+                str(iou),
+                str(imgsz),
+                str(max_det),
+            ],
+            check=True,
+            capture_output=True,
+            text=True,
+            timeout=timeout,
+        )
+        if completed.stdout.strip():
+            _segment_log(f'YOLO subprocess stdout: {completed.stdout.strip()}')
+        if completed.stderr.strip():
+            _segment_log(f'YOLO subprocess stderr: {completed.stderr.strip()}')
+        detections = json.loads(output_path.read_text(encoding='utf-8'))
+        merged = _detections_to_segments(detections)
+        _segment_log(f'YOLO subprocess done: raw_items={len(detections)} merged_items={len(merged)}')
+        return merged
+    finally:
+        output_path.unlink(missing_ok=True)
+
+
 def detect_segments_with_yolo(image_path: Path) -> list[SegmentItem]:
+    model_path = find_yolo_model_path()
+    if os.getenv('YOLO_PYTHON'):
+        return detect_segments_with_yolo_subprocess(image_path, model_path)
+
     from ultralytics import YOLO
 
-    model_path = find_yolo_model_path()
     _segment_log(f'YOLO enabled: loading model={model_path} image={image_path}')
     model = YOLO(str(model_path))
     conf = _env_float('YOLO_CONF', 0.25)
@@ -293,7 +416,7 @@ def detect_segments_with_yolo(image_path: Path) -> list[SegmentItem]:
     _segment_log(f'YOLO predict start: conf={conf} iou={iou} imgsz={imgsz} max_det={max_det}')
     results = model.predict(str(image_path), conf=conf, iou=iou, imgsz=imgsz, max_det=max_det, verbose=False)
     names = getattr(model, 'names', {}) or {}
-    items: list[SegmentItem] = []
+    detections: list[dict] = []
     for result in results or []:
         result_names = getattr(result, 'names', None) or names
         boxes = getattr(result, 'boxes', None)
@@ -302,16 +425,10 @@ def detect_segments_with_yolo(image_path: Path) -> list[SegmentItem]:
         for box in boxes:
             cls_id = int(_value_to_float(getattr(box, 'cls', 0)))
             label = str(result_names.get(cls_id, cls_id)) if isinstance(result_names, dict) else str(cls_id)
-            seg_type = _label_to_segment_type(label)
-            if seg_type is None:
-                continue
-            confidence = _value_to_float(getattr(box, 'conf', 0.0))
-            bbox = _xyxy_to_bbox(getattr(box, 'xyxy')[0] if hasattr(getattr(box, 'xyxy'), '__getitem__') else getattr(box, 'xyxy'))
-            if bbox[2] <= 0 or bbox[3] <= 0:
-                continue
-            items.append(SegmentItem(type=seg_type, shape=_label_to_shape(label), bbox_px=bbox, confidence=confidence))
-    merged = merge_segments_by_layer(items)
-    _segment_log(f'YOLO predict done: raw_items={len(items)} merged_items={len(merged)}')
+            xyxy = getattr(box, 'xyxy')[0] if hasattr(getattr(box, 'xyxy'), '__getitem__') else getattr(box, 'xyxy')
+            detections.append({'label': label, 'confidence': _value_to_float(getattr(box, 'conf', 0.0)), 'xyxy': xyxy})
+    merged = _detections_to_segments(detections)
+    _segment_log(f'YOLO predict done: raw_items={len(detections)} merged_items={len(merged)}')
     return merged
 
 
